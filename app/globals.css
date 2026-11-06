@@ -338,3 +338,21 @@ button { touch-action: manipulation; -webkit-user-select: none; user-select: non
 @media (max-width: 480px) {
   .app { padding-top: calc(24px + env(safe-area-inset-top)); padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
 }
+
+/* ---------- 簡化版問答 ---------- */
+.essay .tag { display: inline-block; margin-top: 12px; }
+.plain { margin: -6px 0 0; padding: 12px 14px; border-radius: 12px; background: #eef2ff; color: #3730a3; line-height: 1.6; font-size: 15px; }
+.think { text-align: center; color: var(--muted); margin: 18px 0 0; }
+ul.model { list-style: none; margin: 0; padding: 14px; display: grid; gap: 10px; white-space: normal; }
+ul.model li { position: relative; padding-left: 22px; animation: slide .35s ease-out backwards; }
+ul.model li::before { content: "✔"; position: absolute; left: 0; color: var(--gold); font-weight: 900; }
+.ask { text-align: center; font-weight: 700; margin: 18px 0 10px; }
+.rate { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.rate button {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 6px;
+  border-radius: 14px; border: 2px solid var(--line); background: #fff; color: var(--ink); font-size: 14px; font-weight: 700;
+  transition: transform .12s, border-color .12s;
+}
+.rate button:hover { transform: translateY(-3px); border-color: var(--gold); }
+.rate-emoji { font-size: 30px; }
+.essay-score .big-num { font-size: 34px; }

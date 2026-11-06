@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ESSAYS, EXAM, QUESTIONS, TOPICS, type EssayQ, type Question, type Topic } from "@/data/questions";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ESSAYS, EXAM, QUESTIONS, TOPICS, type EssayQ, type Question } from "@/data/questions";
 import { sfx, sfx2 } from "@/lib/sound";
 
 type Mode = "challenge" | "practice" | "review" | "exam" | "essay";
@@ -64,8 +64,6 @@ type Floater = { id: number; text: string };
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("home");
   const [mode, setMode] = useState<Mode>("challenge");
-  const [topics, setTopics] = useState<Topic[]>(TOPICS.map((t) => t.name));
-  const [withExtra, setWithExtra] = useState(true);
   const [deck, setDeck] = useState<Question[]>([]);
   const [essayDeck, setEssayDeck] = useState<EssayQ[]>([]);
   const [idx, setIdx] = useState(0);
@@ -114,11 +112,11 @@ export default function Home() {
     let e: EssayQ[] = [];
     if (m === "review") d = shuffle(QUESTIONS.filter((x) => wrongIds.includes(x.id)));
     else if (m === "exam") {
-      d = shuffle(QUESTIONS.filter((x) => x.official)).slice(0, EXAM.choiceCount);
+      d = shuffle(QUESTIONS).slice(0, EXAM.choiceCount);
       e = shuffle(ESSAYS).slice(0, EXAM.essayCount);
     } else if (m === "essay") e = shuffle(ESSAYS);
     else {
-      const pool = shuffle(QUESTIONS.filter((x) => topics.includes(x.topic) && (withExtra || x.official)));
+      const pool = shuffle(QUESTIONS);
       d = m === "challenge" ? pool.slice(0, ROUND_SIZE) : pool;
     }
     if (d.length === 0 && e.length === 0) return;
@@ -327,18 +325,6 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, [phase, q, answered, hidden, next, submit]);
 
-  const counts = useMemo(() => {
-    const m: Record<string, number> = {};
-    QUESTIONS.forEach((x) => {
-      if (withExtra || x.official) m[x.topic] = (m[x.topic] ?? 0) + 1;
-    });
-    return m;
-  }, [withExtra]);
-
-  function toggleTopic(t: Topic) {
-    play(sfx.click);
-    setTopics((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
-  }
   function toggleSound() {
     setSound((s) => {
       save("clg_sound", !s);
@@ -346,7 +332,7 @@ export default function Home() {
     });
   }
 
-  const pool = QUESTIONS.filter((x) => topics.includes(x.topic) && (withExtra || x.official)).length;
+  const pool = QUESTIONS.length;
   const totalSteps = deck.length + essayDeck.length;
 
   // ============================================================
@@ -366,49 +352,32 @@ export default function Home() {
             <div>
               <b>📝 期中考怎麼考</b>
               <p>
-                選擇 {EXAM.choiceCount} 題 × {EXAM.choicePoint} 分＋問答 {EXAM.essayCount} 題 × {EXAM.essayPoint} 分（答案必須寫理由）
+                選擇 {EXAM.choiceCount} 題 × {EXAM.choicePoint} 分＋問答 {EXAM.essayCount} 題 × {EXAM.essayPoint} 分
                 <br />
                 占學期成績 30%，<b className="warn">未到考 0 分！</b>
               </p>
             </div>
             <button className="btn primary" onClick={() => start("exam")}>
               📝 模擬考
-              <small>完全照考試配分・滿分 100{bestExam ? `・最高 ${bestExam} 分` : ""}</small>
+              <small>跟考試一樣的題數・滿分 100{bestExam ? `・最高 ${bestExam} 分` : ""}</small>
             </button>
           </div>
-
-          <h2>選擇題範圍</h2>
-          <div className="topics">
-            {TOPICS.map((t) => (
-              <button key={t.name} className={`topic ${topics.includes(t.name) ? "on" : ""}`} onClick={() => toggleTopic(t.name)}>
-                <span className="t-icon">{t.icon}</span>
-                <span className="t-name">{t.name}</span>
-                <span className="t-desc">
-                  {t.desc}・{counts[t.name] ?? 0} 題
-                </span>
-              </button>
-            ))}
-          </div>
-          <label className="extra-toggle">
-            <input type="checkbox" checked={withExtra} onChange={(e) => setWithExtra(e.target.checked)} />
-            加入延伸練習題（依投影片條文出的是非／選擇，不是考試原題）
-          </label>
 
           <div className="modes">
             <button className="btn" disabled={pool === 0} onClick={() => start("challenge")}>
               🏛️ 闖關模式
               <small>
-                {Math.min(ROUND_SIZE, pool)} 題・{LIVES} 條命・每題 {TIME_LIMIT} 秒・連勝加倍
+                {ROUND_SIZE} 題・{LIVES} 條命・限時作答
               </small>
             </button>
             <div className="modes row">
               <button className="btn" disabled={pool === 0} onClick={() => start("practice")}>
                 📖 選擇題練習
-                <small>不計時、不扣命・{pool} 題</small>
+                <small>慢慢來・{pool} 題</small>
               </button>
               <button className="btn" onClick={() => start("essay")}>
                 ✍️ 問答題練習
-                <small>{ESSAYS.length} 題・寫完對照得分點</small>
+                <small>{ESSAYS.length} 題・想一想再看答案</small>
               </button>
             </div>
             <button className="btn" disabled={wrongIds.length === 0} onClick={() => start("review")}>
@@ -418,7 +387,7 @@ export default function Home() {
           </div>
 
           <p className="best">🏆 闖關最高分：{best}</p>
-          <p className="hint">鍵盤也能玩：1–4 或 A–D 選答、O / X 是非、Enter 下一題</p>
+          
         </section>
       )}
 
@@ -453,7 +422,6 @@ export default function Home() {
               {TOPICS.find((t) => t.name === q.topic)?.icon} {q.topic}
             </span>
             <span>
-              <span className={`src ${q.official ? "" : "extra"}`}>{q.official ? q.source : "延伸練習"}</span>
               第 {idx + 1} / {deck.length} 題
             </span>
           </div>
@@ -518,7 +486,6 @@ export default function Home() {
                 </p>
               )}
               <p className="exp">💡 {q.explanation}</p>
-              {q.article && <p className="article">📌 {q.article}</p>}
               <button className="btn primary next" onClick={next}>
                 {(mode === "challenge" && lives <= 0) || idx + 1 >= deck.length
                   ? essayDeck.length
@@ -584,8 +551,14 @@ export default function Home() {
 }
 
 // ============================================================
-// 問答題卡
+// 問答題卡：想一想 → 看答案 → 自己評分
 // ============================================================
+const RATINGS = [
+  { score: 10, emoji: "😎", label: "都想到了", line: "太強了，這題穩拿！" },
+  { score: 6, emoji: "🤔", label: "想到一部分", line: "不錯喔，再看一次重點就記住了" },
+  { score: 2, emoji: "😵", label: "沒想到", line: "沒關係，現在看過就會了！" },
+];
+
 function EssayCard(props: {
   q: EssayQ;
   n: number;
@@ -600,58 +573,36 @@ function EssayCard(props: {
   onDone: (r: EssayResult) => void;
 }) {
   const { q, n, total, exam, score, progress, last, play, burst, flash, onDone } = props;
-  const [text, setText] = useState("");
   const [revealed, setRevealed] = useState(false);
-  const [checked, setChecked] = useState<boolean[]>(q.points.map(() => false));
-  const lastKey = useRef(0);
-
-  const got = q.points.reduce((s, p, i) => s + (checked[i] ? p.score : 0), 0);
-  const hasReason = /§|條|第\s*\d/.test(text);
+  const [rating, setRating] = useState<number | null>(null);
 
   function reveal() {
-    const t = norm(text);
-    const auto = q.points.map((p) => p.keywords.some((k) => t.includes(norm(k))));
-    setChecked(auto);
     setRevealed(true);
     play(sfx2.paper);
-    const s = q.points.reduce((sum, p, i) => sum + (auto[i] ? p.score : 0), 0);
-    setTimeout(() => {
-      if (s >= 8) {
-        burst();
-        flash("good");
-        play(sfx.fanfare);
-      } else if (s >= 5) {
-        flash("good");
-        play(() => sfx.correct(1));
-      } else {
-        flash("bad");
-        play(sfx.sad);
-      }
-    }, 250);
   }
 
-  function toggle(i: number) {
-    const on = !checked[i];
-    setChecked((c) => c.map((x, j) => (j === i ? on : x)));
-    play(() => sfx2.check(on));
-  }
-
-  function onType(v: string) {
-    setText(v);
-    const now = Date.now();
-    if (now - lastKey.current > 40) {
-      lastKey.current = now;
-      play(sfx2.key);
+  function rate(i: number) {
+    if (rating !== null) return;
+    setRating(i);
+    const s = RATINGS[i].score;
+    if (s === 10) {
+      burst();
+      flash("good");
+      play(sfx.fanfare);
+    } else if (s >= 6) {
+      flash("good");
+      play(() => sfx.correct(1));
+    } else {
+      play(sfx.sad);
     }
   }
 
-  const verdict =
-    got >= 9 ? "理由充足，全部勝訴！🎉" : got >= 7 ? "大致有理由，部分勝訴 👍" : got >= 4 ? "理由不太夠，法官半信半疑 🤔" : "理由不備，駁回！再看一次參考答案 📖";
+  const r = rating !== null ? RATINGS[rating] : null;
 
   return (
     <section className="card essay">
       <header className="hud">
-        <span className="mode-tag">{exam ? "📝 模擬考・問答題" : "✍️ 問答題練習"}</span>
+        <span className="mode-tag">{exam ? "📝 模擬考・問答題" : "✍️ 問答題"}</span>
         <span className="score">
           {score}
           <small> 分</small>
@@ -664,55 +615,54 @@ function EssayCard(props: {
         <div style={{ width: `${progress * 100}%` }} />
       </div>
 
-      <div className="essay-head">
-        <span className="tag">✍️ 問答題・{q.title}</span>
-        <span className="src">{q.source}</span>
-      </div>
+      <span className="tag">✍️ {q.title}</span>
       <h3 className="question pre">{q.question}</h3>
+      <p className="plain">💬 簡單說：{q.plain}</p>
 
-      <textarea
-        className="answer-box"
-        placeholder="在這裡寫你的答案…記得：先寫結論，再寫「依民法第○條…」當理由！"
-        value={text}
-        onChange={(e) => onType(e.target.value)}
-        disabled={revealed}
-        rows={7}
-      />
       {!revealed && (
         <>
-          {text.length > 20 && !hasReason && <p className="nudge">⚠️ 好像還沒寫到法條喔！老師說答案必須寫理由。</p>}
+          <p className="think">先在心裡想一想答案，想好了再打開 👇</p>
           <button className="btn primary next" onClick={reveal}>
-            {text.trim() ? "📤 交卷・看參考答案" : "🙈 我不會，直接看答案"}
+            💡 看答案
           </button>
         </>
       )}
 
       {revealed && (
         <div className="essay-result">
-          <div className={`essay-score ${got >= 7 ? "good" : got >= 4 ? "mid" : "bad"}`}>
-            <span className="big-num">{got}</span>
-            <span>/ 10 分</span>
-            <span className="essay-verdict">{verdict}</span>
-          </div>
-
-          <h4>🎯 得分點（系統依關鍵字先幫你勾，請對照參考答案自己調整）</h4>
-          <ul className="points">
-            {q.points.map((p, i) => (
-              <li key={i} className={checked[i] ? "on" : ""} onClick={() => toggle(i)}>
-                <span className="box">{checked[i] ? "✔" : ""}</span>
-                <span className="p-text">{p.text}</span>
-                <span className="p-score">{p.score} 分</span>
+          <ul className="model">
+            {q.answer.map((a, i) => (
+              <li key={i} style={{ animationDelay: `${i * 0.15}s` }}>
+                {a}
               </li>
             ))}
           </ul>
 
-          <h4>📜 參考答案</h4>
-          <div className="model">{q.model}</div>
-          {q.note && <p className="article">ℹ️ {q.note}</p>}
-
-          <button className="btn primary next" onClick={() => onDone({ q, score: got, text })}>
-            {last ? "看判決結果 →" : "下一題 →"}
-          </button>
+          {r === null ? (
+            <>
+              <p className="ask">你剛剛想的跟答案差不多嗎？</p>
+              <div className="rate">
+                {RATINGS.map((x, i) => (
+                  <button key={i} onClick={() => rate(i)}>
+                    <span className="rate-emoji">{x.emoji}</span>
+                    {x.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className={`essay-score ${r.score >= 10 ? "good" : r.score >= 6 ? "mid" : "bad"}`}>
+                <span className="big-num">
+                  {r.emoji} +{r.score}
+                </span>
+                <span className="essay-verdict">{r.line}</span>
+              </div>
+              <button className="btn primary next" onClick={() => onDone({ q, score: r.score, text: "" })}>
+                {last ? "看結果 →" : "下一題 →"}
+              </button>
+            </>
+          )}
         </div>
       )}
     </section>
@@ -745,7 +695,7 @@ function EndScreen(props: {
 
   const r = rank(acc);
   const wrong = results.filter((x) => !x.correct);
-  const weakEssays = essayResults.filter((x) => x.score < 7);
+  const weakEssays = essayResults.filter((x) => x.score < 10);
   const stars = acc >= 0.9 ? 3 : acc >= 0.6 ? 2 : acc > 0 ? 1 : 0;
 
   return (
@@ -815,8 +765,8 @@ function EndScreen(props: {
               <small>平均每題</small>
             </div>
             <div>
-              <b>{essayResults.filter((x) => x.score >= 9).length}</b>
-              <small>滿分級題數</small>
+              <b>{essayResults.filter((x) => x.score >= 10).length}</b>
+              <small>都想到的題數</small>
             </div>
           </div>
         ) : (
@@ -857,7 +807,6 @@ function EndScreen(props: {
                 正確答案：<b>{answerText(q)}</b>
               </p>
               <p className="exp">💡 {q.explanation}</p>
-              {q.article && <p className="article">📌 {q.article}</p>}
             </details>
           ))}
           {weakEssays.map(({ q, score: s }) => (
@@ -865,7 +814,11 @@ function EndScreen(props: {
               <summary>
                 ✍️ {q.title}（{s} / 10 分）
               </summary>
-              <div className="model">{q.model}</div>
+              <ul className="model">
+                {q.answer.map((a, i) => (
+                  <li key={i}>{a}</li>
+                ))}
+              </ul>
             </details>
           ))}
         </div>
