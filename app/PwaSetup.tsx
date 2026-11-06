@@ -74,7 +74,7 @@ export default function PwaSetup({ base }: { base: string }) {
     <div className="install-bar" role="dialog" aria-label="加到主畫面">
       <img src={`${base}/icon-192.png`} alt="" width={44} height={44} />
       <div className="install-text">
-        <b>把民法大闖關加到主畫面</b>
+        <b>把考試題庫訓練加到主畫面</b>
         {hint === "ios" && (
           <span>
             點 Safari 下方的 <ShareIcon /> 分享，再選「<b>加入主畫面</b>」

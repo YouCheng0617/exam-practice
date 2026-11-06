@@ -1,23 +1,34 @@
-// ============================================================
-// 題庫來源：洪志明老師《民法概要》投影片（開學簡介、總則1、總則2）
-// 解釋都用白話寫，不用背法條
-// ============================================================
+import type { Subject } from "../types";
 
-export type Topic = "法律基本觀念" | "人與法人" | "契約與約定" | "時效";
-
-export const TOPICS: { name: Topic; icon: string }[] = [
-  { name: "法律基本觀念", icon: "🏮" },
-  { name: "人與法人", icon: "👤" },
-  { name: "契約與約定", icon: "✍️" },
-  { name: "時效", icon: "⏳" },
-];
-
-type Base = { id: string; topic: Topic; question: string; explanation: string };
-export type ChoiceQ = Base & { type: "choice"; options: string[]; answer: number };
-export type TfQ = Base & { type: "tf"; answer: boolean };
-export type Question = ChoiceQ | TfQ;
-
-export const QUESTIONS: Question[] = [
+// 來源：洪志明老師《民法概要》投影片（開學簡介、總則1、總則2）
+const civilLaw: Subject = {
+  id: "civil-law",
+  name: "民法概要",
+  icon: "⚖️",
+  desc: "總則篇・期中考範圍",
+  topics: [
+    { name: "法律基本觀念", icon: "🏮" },
+    { name: "人與法人", icon: "👤" },
+    { name: "契約與約定", icon: "✍️" },
+    { name: "時效", icon: "⏳" },
+  ],
+  exam: {
+    name: "期中考",
+    choiceCount: 15,
+    choicePoint: 4,
+    essayCount: 4,
+    essayPoint: 10,
+    weight: 0.3,
+    note: "未到考 0 分！",
+  },
+  flavor: {
+    correctLines: ["勝訴！", "異議成立！", "判決確定，你贏了！", "法官點頭了 👨‍⚖️", "完美辯護！"],
+    wrongLines: ["敗訴…", "異議駁回！", "法官皺眉了…", "上訴還來得及！", "差一點點！"],
+    stampRight: "勝訴",
+    stampWrong: "敗訴",
+    resultTitle: "民 事 判 決",
+  },
+  questions: [
   {
     id: "o1", topic: "法律基本觀念", type: "choice",
     question: "習慣作為法源，除反覆實施之慣行外，尚須有下列哪一項要件？",
@@ -114,18 +125,8 @@ export const QUESTIONS: Question[] = [
     options: ["消滅時效完成後，債權即消滅", "主權利時效消滅者，不及於從權利", "消滅時效完成後，債務人若仍清償債務者，於知悉後，得依不當得利請求返還", "消滅時效完成後，債務人得行使拒絕給付抗辯權"], answer: 3,
     explanation: "欠錢太久沒討，時間到了（時效完成），債其實還在，只是欠錢的人可以說「我不還」。如果他自己還了，就不能再要回來。",
   },
-];
-
-// ==================== 問答題 ====================
-export type EssayQ = {
-  id: string;
-  title: string;
-  question: string;
-  plain: string; // 白話版題目
-  answer: string[]; // 白話答案重點
-};
-
-export const ESSAYS: EssayQ[] = [
+],
+  essays: [
   {
     id: "q10",
     title: "高中生的皮夾與零用錢",
@@ -198,7 +199,7 @@ export const ESSAYS: EssayQ[] = [
       "所以乙說「胎兒不是人」沒道理，治療胎兒的 20 萬要賠。",
     ],
   },
-];
+],
+};
 
-// 模擬考配分（期中考：選擇 15 題 × 4 分、問答 4 題 × 10 分）
-export const EXAM = { choiceCount: 15, choicePoint: 4, essayCount: 4, essayPoint: 10 };
+export default civilLaw;

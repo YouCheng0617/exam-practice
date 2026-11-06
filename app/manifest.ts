@@ -6,9 +6,9 @@ const base = process.env.PAGES_BASE_PATH || "";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "民法大闖關",
-    short_name: "民法大闖關",
-    description: "民法概要總則篇期中考複習遊戲",
+    name: "考試題庫訓練",
+    short_name: "考試題庫訓練",
+    description: "多科目考試題庫練習：模擬考、闖關、錯題本",
     id: `${base}/`,
     start_url: `${base}/`,
     scope: `${base}/`,

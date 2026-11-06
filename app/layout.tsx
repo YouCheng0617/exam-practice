@@ -5,10 +5,10 @@ import PwaSetup from "./PwaSetup";
 const base = process.env.PAGES_BASE_PATH || "";
 
 export const metadata: Metadata = {
-  title: "民法大闖關",
-  description: "民法概要總則篇期中考複習遊戲",
-  applicationName: "民法大闖關",
-  appleWebApp: { capable: true, title: "民法大闖關", statusBarStyle: "black-translucent" },
+  title: "考試題庫訓練",
+  description: "多科目考試題庫練習：模擬考、闖關、錯題本",
+  applicationName: "考試題庫訓練",
+  appleWebApp: { capable: true, title: "題庫訓練", statusBarStyle: "black-translucent" },
   icons: {
     icon: [{ url: `${base}/favicon-32.png`, sizes: "32x32" }, { url: `${base}/icon-192.png`, sizes: "192x192" }],
     apple: [{ url: `${base}/apple-touch-icon.png`, sizes: "180x180" }],

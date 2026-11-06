@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ESSAYS, EXAM, QUESTIONS, TOPICS, type EssayQ, type Question } from "@/data/questions";
+import { SUBJECTS } from "@/data/subjects";
+import type { EssayQ, ExamInfo, Question, Subject } from "@/data/types";
 import { sfx, sfx2 } from "@/lib/sound";
 
 type Mode = "challenge" | "practice" | "review" | "exam" | "essay";
@@ -13,23 +14,23 @@ const ROUND_SIZE = 10;
 const LIVES = 3;
 const TIME_LIMIT = 20;
 
-const CORRECT_LINES = ["勝訴！", "異議成立！", "判決確定，你贏了！", "法官點頭了 👨‍⚖️", "這題你是專家證人", "完美辯護！"];
-const WRONG_LINES = ["敗訴…", "異議駁回！", "被告請再想想 😵", "法官皺眉了…", "上訴還來得及！", "差一點點！"];
-const TIMEOUT_LINES = ["逾期未答，視為放棄！", "時效消滅了 ⌛"];
+const CORRECT_LINES = ["答對了！", "太神啦！", "完全正確 ✨", "這題難不倒你", "讚啦！", "穩穩的 👍"];
+const WRONG_LINES = ["答錯了…", "差一點點！", "再想想 😵", "下次一定會！", "沒關係，記起來就好"];
+const TIMEOUT_LINES = ["時間到了！⌛", "太慢囉～"];
 
 const COMBO_MSG: Record<number, string> = {
-  3: "🔥 三連勝！",
-  5: "⚡ 五連勝・法庭霸主！",
-  7: "🌟 七連勝・你是大法官嗎？",
-  10: "👑 十連勝・判例級表現！",
+  3: "🔥 三連對！",
+  5: "⚡ 五連對！",
+  7: "🌟 七連對・停不下來！",
+  10: "👑 十連對・學神降臨！",
 };
 
 function rank(acc: number) {
-  if (acc >= 0.95) return { title: "大法官", emoji: "👑", line: "民法在你手上就是說明書。" };
-  if (acc >= 0.8) return { title: "資深法官", emoji: "⚖️", line: "條文熟到可以直接開庭了。" };
-  if (acc >= 0.6) return { title: "執業律師", emoji: "💼", line: "大方向都對，細節再補一下就無敵。" };
-  if (acc >= 0.4) return { title: "法律系實習生", emoji: "📚", line: "有概念了，多玩幾輪就會進步！" };
-  return { title: "路過的民眾", emoji: "🙋", line: "沒關係，錯題本會幫你記住的！" };
+  if (acc >= 0.95) return { title: "學神", emoji: "👑", line: "這科你根本可以去當助教了。" };
+  if (acc >= 0.8) return { title: "學霸", emoji: "🏆", line: "很穩！考試就照這樣寫。" };
+  if (acc >= 0.6) return { title: "穩穩過關", emoji: "💪", line: "大方向都對，錯的再看一下就好。" };
+  if (acc >= 0.4) return { title: "漸入佳境", emoji: "📚", line: "有概念了，多玩幾輪就會進步！" };
+  return { title: "剛起步", emoji: "🌱", line: "沒關係，錯題本會幫你記住的！" };
 }
 
 const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
@@ -56,12 +57,107 @@ function save(key: string, v: unknown) {
 }
 const isCorrect = (q: Question, p: number | boolean | null) => p !== null && p === q.answer;
 const answerText = (q: Question) => (q.type === "tf" ? (q.answer ? "⭕ 對" : "❌ 錯") : `${"ABCD"[q.answer]}. ${q.options[q.answer]}`);
-const norm = (s: string) => s.replace(/\s+/g, "").replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
 
 type Particle = { id: number; x: number; y: number; r: number; c: string; d: number };
 type Floater = { id: number; text: string };
 
+const examTotal = (e: ExamInfo) => e.choiceCount * e.choicePoint + e.essayCount * e.essayPoint;
+
+// 舊版（只有民法時）的紀錄搬到新的 key
+function migrate() {
+  try {
+    if (localStorage.getItem("clg_best") !== null && localStorage.getItem("civil-law:best") === null) {
+      localStorage.setItem("civil-law:best", localStorage.getItem("clg_best")!);
+      localStorage.setItem("civil-law:bestExam", localStorage.getItem("clg_best_exam") ?? "0");
+      localStorage.setItem("civil-law:wrong", localStorage.getItem("clg_wrong") ?? "[]");
+    }
+    if (localStorage.getItem("clg_sound") !== null && localStorage.getItem("sound") === null)
+      localStorage.setItem("sound", localStorage.getItem("clg_sound")!);
+  } catch {}
+}
+
 export default function Home() {
+  const [subject, setSubject] = useState<Subject | null>(null);
+  const [sound, setSound] = useState(true);
+  const [stats, setStats] = useState<Record<string, { best: number; wrong: number }>>({});
+
+  useEffect(() => {
+    migrate();
+    setSound(load("sound", true));
+  }, []);
+
+  useEffect(() => {
+    if (subject) return;
+    const m: Record<string, { best: number; wrong: number }> = {};
+    SUBJECTS.forEach((s) => {
+      m[s.id] = { best: load(`${s.id}:bestExam`, 0), wrong: load<string[]>(`${s.id}:wrong`, []).length };
+    });
+    setStats(m);
+  }, [subject]);
+
+  function toggleSound() {
+    setSound((s) => {
+      save("sound", !s);
+      return !s;
+    });
+  }
+
+  function choose(s: Subject) {
+    if (sound) sfx.click();
+    setSubject(s);
+    window.scrollTo({ top: 0 });
+  }
+
+  return (
+    <>
+      <button className="sound-btn" onClick={toggleSound} aria-label="音效開關" title="音效開關">
+        {sound ? "🔊" : "🔇"}
+      </button>
+      {subject ? (
+        <Game key={subject.id} subject={subject} sound={sound} onBack={() => setSubject(null)} />
+      ) : (
+        <main className="app">
+          <section className="card home">
+            <div className="logo">📚</div>
+            <h1>考試題庫訓練</h1>
+            <p className="sub">選一個科目開始練習</p>
+            <div className="subjects">
+              {SUBJECTS.map((s) => (
+                <button key={s.id} className="subject" onClick={() => choose(s)}>
+                  <span className="s-icon">{s.icon}</span>
+                  <span className="s-body">
+                    <span className="s-name">{s.name}</span>
+                    <span className="s-desc">{s.desc}</span>
+                    <span className="s-meta">
+                      選擇 {s.questions.length} 題・問答 {s.essays.length} 題
+                      {stats[s.id]?.best ? `・模擬考最高 ${stats[s.id].best} 分` : ""}
+                      {stats[s.id]?.wrong ? `・錯題 ${stats[s.id].wrong}` : ""}
+                    </span>
+                  </span>
+                  <span className="s-go">›</span>
+                </button>
+              ))}
+              <div className="subject soon">＋ 更多科目準備中</div>
+            </div>
+          </section>
+        </main>
+      )}
+    </>
+  );
+}
+
+// ============================================================
+// 單一科目的遊戲
+// ============================================================
+function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; onBack: () => void }) {
+  const QUESTIONS = subject.questions;
+  const ESSAYS = subject.essays;
+  const EXAM = subject.exam;
+  const f = subject.flavor ?? {};
+  const correctLines = f.correctLines ?? CORRECT_LINES;
+  const wrongLines = f.wrongLines ?? WRONG_LINES;
+  const K = (k: string) => `${subject.id}:${k}`;
+
   const [phase, setPhase] = useState<Phase>("home");
   const [mode, setMode] = useState<Mode>("challenge");
   const [deck, setDeck] = useState<Question[]>([]);
@@ -86,7 +182,6 @@ export default function Home() {
   const [flash, setFlash] = useState<"" | "good" | "bad">("");
   const [particles, setParticles] = useState<Particle[]>([]);
   const [floaters, setFloaters] = useState<Floater[]>([]);
-  const [sound, setSound] = useState(true);
   const [best, setBest] = useState(0);
   const [bestExam, setBestExam] = useState(0);
   const [wrongIds, setWrongIds] = useState<string[]>([]);
@@ -94,10 +189,10 @@ export default function Home() {
   const uid = useRef(0);
 
   useEffect(() => {
-    setBest(load("clg_best", 0));
-    setBestExam(load("clg_best_exam", 0));
-    setWrongIds(load("clg_wrong", []));
-    setSound(load("clg_sound", true));
+    setBest(load(K("best"), 0));
+    setBestExam(load(K("bestExam"), 0));
+    setWrongIds(load(K("wrong"), []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const play = useCallback((fn: () => void) => sound && fn(), [sound]);
@@ -111,7 +206,7 @@ export default function Home() {
     let d: Question[] = [];
     let e: EssayQ[] = [];
     if (m === "review") d = shuffle(QUESTIONS.filter((x) => wrongIds.includes(x.id)));
-    else if (m === "exam") {
+    else if (m === "exam" && EXAM) {
       d = shuffle(QUESTIONS).slice(0, EXAM.choiceCount);
       e = shuffle(ESSAYS).slice(0, EXAM.essayCount);
     } else if (m === "essay") e = shuffle(ESSAYS);
@@ -182,7 +277,7 @@ export default function Home() {
         setCombo(c);
         setMaxCombo((m) => Math.max(m, c));
         let gain: number;
-        if (mode === "exam") {
+        if (mode === "exam" && EXAM) {
           gain = EXAM.choicePoint;
           floatText(`+${gain} 分`);
         } else {
@@ -191,7 +286,7 @@ export default function Home() {
           floatText(`+${gain}${c >= 2 ? ` ×${mult.toFixed(1)}` : ""}`);
         }
         setScore((s) => s + gain);
-        setLine(pick(CORRECT_LINES));
+        setLine(pick(correctLines));
         if (COMBO_MSG[c]) {
           setComboBanner(COMBO_MSG[c]);
           setTimeout(() => setComboBanner(""), 1600);
@@ -201,11 +296,11 @@ export default function Home() {
         play(() => sfx.correct(c));
         const w = wrongIds.filter((id) => id !== q.id);
         setWrongIds(w);
-        save("clg_wrong", w);
+        save(K("wrong"), w);
       } else {
         setCombo(0);
         if (mode === "challenge") setLives((l) => l - 1);
-        setLine(choice === null ? pick(TIMEOUT_LINES) : pick(WRONG_LINES));
+        setLine(choice === null ? pick(TIMEOUT_LINES) : pick(wrongLines));
         setShake(true);
         setTimeout(() => setShake(false), 500);
         flashScreen("bad");
@@ -213,7 +308,7 @@ export default function Home() {
         if (!wrongIds.includes(q.id)) {
           const w = [...wrongIds, q.id];
           setWrongIds(w);
-          save("clg_wrong", w);
+          save(K("wrong"), w);
         }
       }
     },
@@ -225,7 +320,7 @@ export default function Home() {
     (finalScore: number) => {
       setPhase("end");
       window.scrollTo({ top: 0 });
-      const key = mode === "exam" ? "clg_best_exam" : mode === "challenge" ? "clg_best" : null;
+      const key = mode === "exam" ? K("bestExam") : mode === "challenge" ? K("best") : null;
       const prev = mode === "exam" ? bestExam : best;
       if (key && finalScore > prev) {
         if (mode === "exam") setBestExam(finalScore);
@@ -325,69 +420,77 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, [phase, q, answered, hidden, next, submit]);
 
-  function toggleSound() {
-    setSound((s) => {
-      save("clg_sound", !s);
-      return !s;
-    });
-  }
-
   const pool = QUESTIONS.length;
   const totalSteps = deck.length + essayDeck.length;
 
   // ============================================================
   return (
     <main className={`app ${flash ? `flash-${flash}` : ""}`}>
-      <button className="sound-btn" onClick={toggleSound} aria-label="音效開關" title="音效開關">
-        {sound ? "🔊" : "🔇"}
-      </button>
-
       {phase === "home" && (
         <section className="card home">
-          <div className="logo">⚖️</div>
-          <h1>民法大闖關</h1>
-          <p className="sub">民法概要・總則篇　期中考複習</p>
+          <button className="back" onClick={onBack}>
+            ‹ 換科目
+          </button>
+          <div className="logo">{subject.icon}</div>
+          <h1>{subject.name}</h1>
+          <p className="sub">{subject.desc}</p>
 
-          <div className="exam-box">
-            <div>
-              <b>📝 期中考怎麼考</b>
-              <p>
-                選擇 {EXAM.choiceCount} 題 × {EXAM.choicePoint} 分＋問答 {EXAM.essayCount} 題 × {EXAM.essayPoint} 分
-                <br />
-                占學期成績 30%，<b className="warn">未到考 0 分！</b>
-              </p>
+          {EXAM && (
+            <div className="exam-box">
+              <div>
+                <b>📝 {EXAM.name}怎麼考</b>
+                <p>
+                  {EXAM.choiceCount > 0 && `選擇 ${EXAM.choiceCount} 題 × ${EXAM.choicePoint} 分`}
+                  {EXAM.choiceCount > 0 && EXAM.essayCount > 0 && "＋"}
+                  {EXAM.essayCount > 0 && `問答 ${EXAM.essayCount} 題 × ${EXAM.essayPoint} 分`}
+                  {(EXAM.weight || EXAM.note) && <br />}
+                  {EXAM.weight ? `占學期成績 ${Math.round(EXAM.weight * 100)}%` : ""}
+                  {EXAM.weight && EXAM.note ? "，" : ""}
+                  {EXAM.note && <b className="warn">{EXAM.note}</b>}
+                </p>
+              </div>
+              <button className="btn primary" onClick={() => start("exam")}>
+                📝 模擬考
+                <small>
+                  跟考試一樣的題數・滿分 {examTotal(EXAM)}
+                  {bestExam ? `・最高 ${bestExam} 分` : ""}
+                </small>
+              </button>
             </div>
-            <button className="btn primary" onClick={() => start("exam")}>
-              📝 模擬考
-              <small>跟考試一樣的題數・滿分 100{bestExam ? `・最高 ${bestExam} 分` : ""}</small>
-            </button>
-          </div>
+          )}
 
           <div className="modes">
-            <button className="btn" disabled={pool === 0} onClick={() => start("challenge")}>
-              🏛️ 闖關模式
-              <small>
-                {ROUND_SIZE} 題・{LIVES} 條命・限時作答
-              </small>
-            </button>
-            <div className="modes row">
-              <button className="btn" disabled={pool === 0} onClick={() => start("practice")}>
-                📖 選擇題練習
-                <small>慢慢來・{pool} 題</small>
+            {pool > 0 && (
+              <button className="btn" onClick={() => start("challenge")}>
+                🏛️ 闖關模式
+                <small>
+                  {Math.min(ROUND_SIZE, pool)} 題・{LIVES} 條命・限時作答
+                </small>
               </button>
-              <button className="btn" onClick={() => start("essay")}>
-                ✍️ 問答題練習
-                <small>{ESSAYS.length} 題・想一想再看答案</small>
-              </button>
+            )}
+            <div className={pool > 0 && ESSAYS.length > 0 ? "modes row" : "modes"}>
+              {pool > 0 && (
+                <button className="btn" onClick={() => start("practice")}>
+                  📖 選擇題練習
+                  <small>慢慢來・{pool} 題</small>
+                </button>
+              )}
+              {ESSAYS.length > 0 && (
+                <button className="btn" onClick={() => start("essay")}>
+                  ✍️ 問答題練習
+                  <small>{ESSAYS.length} 題・想一想再看答案</small>
+                </button>
+              )}
             </div>
-            <button className="btn" disabled={wrongIds.length === 0} onClick={() => start("review")}>
-              📕 錯題本
-              <small>{wrongIds.length ? `${wrongIds.length} 題等你復仇` : "目前沒有錯題 🎉"}</small>
-            </button>
+            {pool > 0 && (
+              <button className="btn" disabled={wrongIds.length === 0} onClick={() => start("review")}>
+                📕 錯題本
+                <small>{wrongIds.length ? `${wrongIds.length} 題等你復仇` : "目前沒有錯題 🎉"}</small>
+              </button>
+            )}
           </div>
 
-          <p className="best">🏆 闖關最高分：{best}</p>
-          
+          {pool > 0 && <p className="best">🏆 闖關最高分：{best}</p>}
         </section>
       )}
 
@@ -419,7 +522,7 @@ export default function Home() {
           </div>
           <div className="meta">
             <span className="tag">
-              {TOPICS.find((t) => t.name === q.topic)?.icon} {q.topic}
+              {subject.topics?.find((t) => t.name === q.topic)?.icon ?? subject.icon} {q.topic ?? subject.name}
             </span>
             <span>
               第 {idx + 1} / {deck.length} 題
@@ -466,10 +569,10 @@ export default function Home() {
           {!answered && lifelines && (
             <div className="lifelines">
               <button onClick={fiftyFifty} disabled={used5050 || q.type !== "choice"}>
-                🧑‍⚖️ 請教學長（刪去兩個）
+                💡 提示（刪去兩個）
               </button>
               <button onClick={skip} disabled={usedSkip}>
-                ⏭️ 聲請延期（跳過）
+                ⏭️ 跳過這題
               </button>
             </div>
           )}
@@ -477,7 +580,7 @@ export default function Home() {
           {answered && (
             <div className={`feedback ${isCorrect(q, picked) ? "good" : "bad"}`}>
               <div className="verdict">
-                <span className="stamp">{isCorrect(q, picked) ? "勝訴" : "敗訴"}</span>
+                <span className="stamp">{isCorrect(q, picked) ? f.stampRight ?? "正確" : f.stampWrong ?? "錯誤"}</span>
                 <span>{line}</span>
               </div>
               {!isCorrect(q, picked) && (
@@ -490,7 +593,7 @@ export default function Home() {
                 {(mode === "challenge" && lives <= 0) || idx + 1 >= deck.length
                   ? essayDeck.length
                     ? "進入問答題 →"
-                    : "看判決結果 →"
+                    : "看結果 →"
                   : "下一題 →"}
               </button>
             </div>
@@ -518,6 +621,7 @@ export default function Home() {
           play={play}
           burst={burst}
           flash={flashScreen}
+          point={mode === "exam" && EXAM ? EXAM.essayPoint : 10}
           onDone={essayDone}
         />
       )}
@@ -531,6 +635,7 @@ export default function Home() {
           mode={mode}
           lives={lives}
           newRecord={newRecord}
+          subject={subject}
           onRetry={() => start(mode === "review" && wrongIds.length === 0 ? "challenge" : mode)}
           onHome={() => setPhase("home")}
         />
@@ -570,9 +675,10 @@ function EssayCard(props: {
   play: (fn: () => void) => void;
   burst: (n?: number) => void;
   flash: (k: "good" | "bad") => void;
+  point: number;
   onDone: (r: EssayResult) => void;
 }) {
-  const { q, n, total, exam, score, progress, last, play, burst, flash, onDone } = props;
+  const { q, n, total, exam, score, progress, last, play, burst, flash, point, onDone } = props;
   const [revealed, setRevealed] = useState(false);
   const [rating, setRating] = useState<number | null>(null);
 
@@ -598,6 +704,7 @@ function EssayCard(props: {
   }
 
   const r = rating !== null ? RATINGS[rating] : null;
+  const gain = r ? Math.round((r.score / 10) * point) : 0;
 
   return (
     <section className="card essay">
@@ -617,7 +724,7 @@ function EssayCard(props: {
 
       <span className="tag">✍️ {q.title}</span>
       <h3 className="question pre">{q.question}</h3>
-      <p className="plain">💬 簡單說：{q.plain}</p>
+      {q.plain && <p className="plain">💬 簡單說：{q.plain}</p>}
 
       {!revealed && (
         <>
@@ -654,11 +761,11 @@ function EssayCard(props: {
             <>
               <div className={`essay-score ${r.score >= 10 ? "good" : r.score >= 6 ? "mid" : "bad"}`}>
                 <span className="big-num">
-                  {r.emoji} +{r.score}
+                  {r.emoji} +{gain}
                 </span>
                 <span className="essay-verdict">{r.line}</span>
               </div>
-              <button className="btn primary next" onClick={() => onDone({ q, score: r.score, text: "" })}>
+              <button className="btn primary next" onClick={() => onDone({ q, score: gain, text: "" })}>
                 {last ? "看結果 →" : "下一題 →"}
               </button>
             </>
@@ -680,16 +787,19 @@ function EndScreen(props: {
   mode: Mode;
   lives: number;
   newRecord: boolean;
+  subject: Subject;
   onRetry: () => void;
   onHome: () => void;
 }) {
-  const { results, essayResults, score, maxCombo, mode, lives, newRecord, onRetry, onHome } = props;
+  const { results, essayResults, score, maxCombo, mode, lives, newRecord, subject, onRetry, onHome } = props;
+  const EXAM = subject.exam;
+  const total = EXAM ? examTotal(EXAM) : 100;
   const right = results.filter((r) => r.correct).length;
-  const choiceScore = right * EXAM.choicePoint;
+  const choiceScore = right * (EXAM?.choicePoint ?? 0);
   const essayScore = essayResults.reduce((s, r) => s + r.score, 0);
 
   let acc: number;
-  if (mode === "exam") acc = score / 100;
+  if (mode === "exam") acc = score / total;
   else if (mode === "essay") acc = essayResults.length ? essayScore / (essayResults.length * 10) : 0;
   else acc = results.length ? right / results.length : 0;
 
@@ -702,23 +812,19 @@ function EndScreen(props: {
     <section className="card end">
       {newRecord && <div className="record">🎉 新紀錄！</div>}
       <div className="doc">
-        <p className="doc-title">民 事 判 決</p>
+        <p className="doc-title">{subject.flavor?.resultTitle ?? "成 績 單"}</p>
         <p className="doc-no">
-          {new Date().getFullYear() - 1911} 年度{mode === "exam" ? "期中模擬" : "複"}字第 {String(score).padStart(4, "0")} 號
-        </p>
-        <p>
-          <b>主　文</b>
+          {subject.name}・{mode === "exam" ? `${EXAM?.name ?? ""}模擬考` : mode === "essay" ? "問答練習" : mode === "challenge" ? "闖關" : "練習"}
         </p>
         <p className="main-text">
           {mode === "challenge" && lives <= 0
-            ? "原告三命用盡，本庭宣判：請回去再讀一下書，擇日再審。"
+            ? "三條命用完了，休息一下再來挑戰！"
             : mode === "exam"
-              ? score >= 60
-                ? `原告期中考模擬得 ${score} 分，及格勝訴！換算學期成績可拿 ${(score * 0.3).toFixed(1)} 分（滿分 30）。考試當天務必到考。`
-                : `原告期中考模擬得 ${score} 分，尚未及格，准予再考一次。換算學期成績 ${(score * 0.3).toFixed(1)} / 30 分。`
+              ? `模擬考得 ${score} 分${score >= total * 0.6 ? "，及格！🎉" : "，還差一點，再考一次！"}` +
+                (EXAM?.weight ? `換算學期成績 ${((score / total) * EXAM.weight * 100).toFixed(1)} / ${Math.round(EXAM.weight * 100)} 分。` : "")
               : acc >= 0.6
-                ? "原告之請求有理由，判決勝訴，訴訟費用由題庫負擔。"
-                : "原告之請求一部有理由，其餘駁回，准予上訴（再玩一次）。"}
+                ? "表現不錯，繼續保持！"
+                : "多練幾次就會進步，錯的題目都收進錯題本了！"}
         </p>
         <div className="rank">
           <span className="rank-emoji">{r.emoji}</span>
@@ -739,19 +845,21 @@ function EndScreen(props: {
           <div className="stats">
             <div>
               <b>{score}</b>
-              <small>總分 / 100</small>
+              <small>總分 / {total}</small>
             </div>
             <div>
               <b>{choiceScore}</b>
-              <small>選擇 / {EXAM.choiceCount * EXAM.choicePoint}</small>
+              <small>選擇 / {(EXAM?.choiceCount ?? 0) * (EXAM?.choicePoint ?? 0)}</small>
             </div>
             <div>
               <b>{essayScore}</b>
-              <small>問答 / {EXAM.essayCount * EXAM.essayPoint}</small>
+              <small>問答 / {(EXAM?.essayCount ?? 0) * (EXAM?.essayPoint ?? 0)}</small>
             </div>
             <div>
-              <b>{(score * 0.3).toFixed(1)}</b>
-              <small>學期成績 / 30</small>
+              <b>
+                {right}/{results.length}
+              </b>
+              <small>選擇答對</small>
             </div>
           </div>
         ) : mode === "essay" ? (
@@ -795,7 +903,7 @@ function EndScreen(props: {
 
       {(wrong.length > 0 || weakEssays.length > 0) && (
         <div className="review">
-          <h3>📕 理由（錯題回顧）</h3>
+          <h3>📕 錯題回顧</h3>
           {wrong.map(({ q, picked }) => (
             <details key={q.id}>
               <summary>{q.question}</summary>
@@ -829,7 +937,7 @@ function EndScreen(props: {
           🔁 再來一局
         </button>
         <button className="btn" onClick={onHome}>
-          🏠 回首頁
+          🏠 回科目首頁
         </button>
       </div>
     </section>

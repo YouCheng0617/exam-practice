@@ -1,5 +1,5 @@
 // 離線快取：頁面用「網路優先」（有網路就拿新版），靜態檔用「快取優先」
-const CACHE = "clg-v2";
+const CACHE = "exam-v1";
 const scope = self.registration.scope; // 例如 https://xxx.github.io/civil-law-game/
 
 self.addEventListener("install", (e) => {

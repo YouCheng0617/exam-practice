@@ -356,3 +356,26 @@ ul.model li::before { content: "✔"; position: absolute; left: 0; color: var(--
 .rate button:hover { transform: translateY(-3px); border-color: var(--gold); }
 .rate-emoji { font-size: 30px; }
 .essay-score .big-num { font-size: 34px; }
+
+/* ---------- 選科目 ---------- */
+.subjects { display: grid; gap: 12px; margin-top: 22px; text-align: left; }
+.subject {
+  display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 16px;
+  border: 2px solid var(--line); background: #fff; color: var(--ink); text-align: left;
+  transition: transform .15s, border-color .15s, box-shadow .15s;
+}
+.subject:hover { transform: translateY(-2px); border-color: var(--gold); box-shadow: 0 8px 20px rgba(0,0,0,.08); }
+.s-icon { flex: none; font-size: 36px; width: 56px; height: 56px; display: grid; place-items: center; border-radius: 14px; background: var(--gold-soft); }
+.s-body { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.s-name { font-size: 18px; font-weight: 800; }
+.s-desc { font-size: 14px; color: #4b5563; }
+.s-meta { font-size: 12px; color: var(--muted); }
+.s-go { flex: none; font-size: 28px; color: var(--gold); font-weight: 700; }
+.subject.soon { justify-content: center; border-style: dashed; color: var(--muted); font-size: 14px; background: transparent; }
+.subject.soon:hover { transform: none; box-shadow: none; border-color: var(--line); }
+.home { position: relative; }
+.back {
+  position: absolute; top: 14px; left: 14px; border: none; background: #f3f4f6; color: var(--ink);
+  padding: 6px 12px; border-radius: 99px; font-size: 14px; font-weight: 700;
+}
+.back:hover { background: #e5e7eb; }
