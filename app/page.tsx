@@ -7,12 +7,14 @@ import { sfx, sfx2 } from "@/lib/sound";
 
 type Mode = "challenge" | "practice" | "review" | "exam" | "essay";
 type Phase = "home" | "play" | "essay" | "end";
-type Result = { q: Question; picked: number | boolean | null; correct: boolean };
+type Picked = number | boolean | number[] | null;
+type Result = { q: Question; picked: Picked; correct: boolean };
 type EssayResult = { q: EssayQ; score: number; text: string };
 
 const ROUND_SIZE = 10;
 const LIVES = 3;
 const TIME_LIMIT = 20;
+const MULTI_TIME_LIMIT = 30; // 複選題多給一點時間
 
 const CORRECT_LINES = ["答對了！", "太神啦！", "完全正確 ✨", "這題難不倒你", "讚啦！", "穩穩的 👍"];
 const WRONG_LINES = ["答錯了…", "差一點點！", "再想想 😵", "下次一定會！", "沒關係，記起來就好"];
@@ -55,8 +57,20 @@ function save(key: string, v: unknown) {
     localStorage.setItem(key, JSON.stringify(v));
   } catch {}
 }
-const isCorrect = (q: Question, p: number | boolean | null) => p !== null && p === q.answer;
-const answerText = (q: Question) => (q.type === "tf" ? (q.answer ? "⭕ 對" : "❌ 錯") : `${"ABCD"[q.answer]}. ${q.options[q.answer]}`);
+const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every((x) => b.includes(x));
+const isCorrect = (q: Question, p: Picked) => {
+  if (p === null) return false;
+  if (q.type === "multi") return Array.isArray(p) && sameSet(p, q.answer);
+  return p === q.answer;
+};
+const optLabel = (q: Question, i: number) => (q.type === "tf" ? "" : `${"ABCD"[i]}. ${q.options[i]}`);
+const multiText = (q: Question, arr: number[]) =>
+  arr.length ? [...arr].sort((a, b) => a - b).map((i) => optLabel(q, i)).join("、") : "（沒有勾選）";
+const answerText = (q: Question) =>
+  q.type === "tf" ? (q.answer ? "⭕ 對" : "❌ 錯") : q.type === "multi" ? multiText(q, q.answer) : optLabel(q, q.answer);
+const pickedText = (q: Question, p: Picked) =>
+  p === null ? "（逾時未答）" : Array.isArray(p) ? multiText(q, p) : typeof p === "boolean" ? (p ? "⭕ 對" : "❌ 錯") : optLabel(q, p);
+const timeFor = (q?: Question) => (q?.type === "multi" ? MULTI_TIME_LIMIT : TIME_LIMIT);
 
 type Particle = { id: number; x: number; y: number; r: number; c: string; d: number };
 type Floater = { id: number; text: string };
@@ -164,7 +178,8 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
   const [essayDeck, setEssayDeck] = useState<EssayQ[]>([]);
   const [idx, setIdx] = useState(0);
   const [eIdx, setEIdx] = useState(0);
-  const [picked, setPicked] = useState<number | boolean | null>(null);
+  const [picked, setPicked] = useState<Picked>(null);
+  const [multiSel, setMultiSel] = useState<number[]>([]);
   const [answered, setAnswered] = useState(false);
   const [line, setLine] = useState("");
   const [score, setScore] = useState(0);
@@ -221,12 +236,13 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
     setIdx(0);
     setEIdx(0);
     setPicked(null);
+    setMultiSel([]);
     setAnswered(false);
     setScore(0);
     setCombo(0);
     setMaxCombo(0);
     setLives(LIVES);
-    setTime(TIME_LIMIT);
+    setTime(timeFor(d[0]));
     setResults([]);
     setEssayResults([]);
     setHidden([]);
@@ -265,7 +281,7 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
 
   // ---------- 選擇題作答 ----------
   const submit = useCallback(
-    (choice: number | boolean | null) => {
+    (choice: Picked) => {
       if (!q || answered) return;
       const ok = isCorrect(q, choice);
       setPicked(choice);
@@ -347,11 +363,12 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
     }
     setIdx((i) => i + 1);
     setPicked(null);
+    setMultiSel([]);
     setAnswered(false);
     setHidden([]);
-    setTime(TIME_LIMIT);
+    setTime(timeFor(deck[idx + 1]));
     play(sfx.click);
-  }, [mode, lives, idx, deck.length, essayDeck.length, finish, score, play]);
+  }, [mode, lives, idx, deck, essayDeck.length, finish, score, play]);
 
   const next = useCallback(() => answered && goNext(), [answered, goNext]);
 
@@ -359,6 +376,11 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
     if (usedSkip || answered || !q) return;
     setUsedSkip(true);
     goNext();
+  }
+  function toggleMulti(i: number) {
+    if (answered) return;
+    setMultiSel((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
+    play(sfx.click);
   }
   function fiftyFifty() {
     if (used5050 || answered || !q || q.type !== "choice") return;
@@ -386,7 +408,7 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
   useEffect(() => {
     if (phase !== "play" || !timed || answered) return;
     if (time <= 0) {
-      submit(null);
+      submit(q?.type === "multi" && multiSel.length ? multiSel : null);
       return;
     }
     const t = setTimeout(() => {
@@ -394,7 +416,7 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
       if (time <= 6) play(sfx.tick);
     }, 1000);
     return () => clearTimeout(t);
-  }, [phase, timed, answered, time, submit, play]);
+  }, [phase, timed, answered, time, submit, play, q, multiSel]);
 
   // ---------- 鍵盤 ----------
   useEffect(() => {
@@ -407,10 +429,16 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
         }
         return;
       }
-      if (q.type === "choice") {
+      if (q.type === "choice" || q.type === "multi") {
         const map: Record<string, number> = { "1": 0, "2": 1, "3": 2, "4": 3, a: 0, b: 1, c: 2, d: 3 };
         const n = map[e.key.toLowerCase()];
-        if (n !== undefined && n < q.options.length && !hidden.includes(n)) submit(n);
+        if (q.type === "multi") {
+          if (n !== undefined && n < q.options.length) toggleMulti(n);
+          else if (e.key === "Enter" && multiSel.length) {
+            e.preventDefault();
+            submit(multiSel);
+          }
+        } else if (n !== undefined && n < q.options.length && !hidden.includes(n)) submit(n);
       } else {
         if (e.key.toLowerCase() === "o" || e.key === "1") submit(true);
         if (e.key.toLowerCase() === "x" || e.key === "2") submit(false);
@@ -418,7 +446,7 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, q, answered, hidden, next, submit]);
+  }, [phase, q, answered, hidden, next, submit, multiSel]);
 
   const pool = QUESTIONS.length;
   const totalSteps = deck.length + essayDeck.length;
@@ -525,20 +553,44 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
               {subject.topics?.find((t) => t.name === q.topic)?.icon ?? subject.icon} {q.topic ?? subject.name}
             </span>
             <span>
+              {q.type === "multi" && <span className="src multi">複選</span>}
               第 {idx + 1} / {deck.length} 題
             </span>
           </div>
 
           {timed && (
             <div className={`timer ${time <= 5 && !answered ? "danger" : ""}`}>
-              <div style={{ width: `${(time / TIME_LIMIT) * 100}%` }} />
+              <div style={{ width: `${(time / timeFor(q)) * 100}%` }} />
               <span>{time}s</span>
             </div>
           )}
 
           <h3 className="question">{q.question}</h3>
 
-          {q.type === "choice" ? (
+          {q.type === "multi" ? (
+            <>
+              <p className="multi-hint">☑️ 複選題：勾選所有正確選項後送出（全對才得分）</p>
+              <div className="options">
+                {q.options.map((o, i) => {
+                  const sel = answered ? Array.isArray(picked) && picked.includes(i) : multiSel.includes(i);
+                  let cls = "opt check";
+                  if (sel) cls += " sel";
+                  if (answered) cls += q.answer.includes(i) ? " right" : sel ? " wrong" : " dim";
+                  return (
+                    <button key={i} className={cls} disabled={answered} onClick={() => toggleMulti(i)} aria-pressed={sel}>
+                      <span className="key">{sel ? "✔" : "ABCD"[i]}</span>
+                      {o}
+                    </button>
+                  );
+                })}
+              </div>
+              {!answered && (
+                <button className="btn primary next" disabled={multiSel.length === 0} onClick={() => submit(multiSel)}>
+                  📤 送出答案（已選 {multiSel.length} 個）
+                </button>
+              )}
+            </>
+          ) : q.type === "choice" ? (
             <div className="options">
               {q.options.map((o, i) => {
                 let cls = "opt";
@@ -585,6 +637,12 @@ function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; on
               </div>
               {!isCorrect(q, picked) && (
                 <p className="ans">
+                  {picked !== null && q.type === "multi" && (
+                    <>
+                      你的答案：{pickedText(q, picked)}
+                      <br />
+                    </>
+                  )}
                   正確答案：<b>{answerText(q)}</b>
                 </p>
               )}
@@ -907,10 +965,7 @@ function EndScreen(props: {
           {wrong.map(({ q, picked }) => (
             <details key={q.id}>
               <summary>{q.question}</summary>
-              <p>
-                你的答案：
-                {picked === null ? "（逾時未答）" : q.type === "tf" ? (picked ? "⭕ 對" : "❌ 錯") : `${"ABCD"[picked as number]}. ${q.options[picked as number]}`}
-              </p>
+              <p>你的答案：{pickedText(q, picked)}</p>
               <p>
                 正確答案：<b>{answerText(q)}</b>
               </p>

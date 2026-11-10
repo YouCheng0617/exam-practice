@@ -379,3 +379,9 @@ ul.model li::before { content: "✔"; position: absolute; left: 0; color: var(--
   padding: 6px 12px; border-radius: 99px; font-size: 14px; font-weight: 700;
 }
 .back:hover { background: #e5e7eb; }
+
+/* ---------- 複選題 ---------- */
+.src.multi { font-size: 12px; background: #ede9fe; color: #6d28d9; padding: 2px 8px; border-radius: 99px; margin-right: 8px; }
+.multi-hint { font-size: 13px; color: #6d28d9; margin: -6px 0 10px; }
+.opt.check.sel:not(.right):not(.wrong) { border-color: #818cf8; background: #eef2ff; }
+.opt.check.sel .key { background: #4338ca; color: #fff; }

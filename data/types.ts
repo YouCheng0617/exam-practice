@@ -4,8 +4,9 @@
 
 type QBase = { id: string; topic?: string; question: string; explanation: string };
 export type ChoiceQ = QBase & { type: "choice"; options: string[]; answer: number }; // answer：正確選項索引，從 0 開始
+export type MultiQ = QBase & { type: "multi"; options: string[]; answer: number[] }; // 複選題，全對才得分
 export type TfQ = QBase & { type: "tf"; answer: boolean }; // 是非題
-export type Question = ChoiceQ | TfQ;
+export type Question = ChoiceQ | MultiQ | TfQ;
 
 export type EssayQ = {
   id: string;
