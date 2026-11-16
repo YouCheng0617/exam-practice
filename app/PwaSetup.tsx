@@ -74,13 +74,13 @@ export default function PwaSetup({ base }: { base: string }) {
     <div className="install-bar" role="dialog" aria-label="加到主畫面">
       <img src={`${base}/icon-192.png`} alt="" width={44} height={44} />
       <div className="install-text">
-        <b>把考試題庫訓練加到主畫面</b>
+        <b>把「沿途」加到主畫面</b>
         {hint === "ios" && (
           <span>
             點 Safari 下方的 <ShareIcon /> 分享，再選「<b>加入主畫面</b>」
           </span>
         )}
-        {hint === "android-prompt" && <span>像 App 一樣全螢幕玩，沒網路也能複習</span>}
+        {hint === "android-prompt" && <span>像 App 一樣全螢幕使用，沒網路也能練習</span>}
         {hint === "android-manual" && (
           <span>
             點 Chrome 右上角 <b>⋮</b>，選「<b>加到主畫面</b>」或「安裝應用程式」
@@ -103,8 +103,8 @@ export default function PwaSetup({ base }: { base: string }) {
 function ShareIcon() {
   return (
     <svg width="14" height="17" viewBox="0 0 14 17" style={{ verticalAlign: "-2px", margin: "0 2px" }} aria-label="分享">
-      <path d="M7 1v10M3.5 4.5 7 1l3.5 3.5" fill="none" stroke="#2563eb" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4.5 7H2v9h10V7H9.5" fill="none" stroke="#2563eb" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M7 1v10M3.5 4.5 7 1l3.5 3.5" fill="none" stroke="#ff7a1a" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4.5 7H2v9h10V7H9.5" fill="none" stroke="#ff7a1a" strokeWidth="1.6" strokeLinejoin="round" />
     </svg>
   );
 }

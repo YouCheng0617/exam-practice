@@ -4,15 +4,15 @@ import type { Subject } from "../types";
 // 單選 20 題、複選 5 題（複選須全對才得分）
 const infosec: Subject = {
   id: "infosec",
+  color: "#17a08c",
   name: "資訊安全",
-  icon: "🔐",
   desc: "資安管理練習題・單選＋複選",
   topics: [
-    { name: "政策與法規", icon: "📜" },
-    { name: "ISMS 與稽核", icon: "🔄" },
-    { name: "組織與人員", icon: "👥" },
-    { name: "風險與資產", icon: "🗂️" },
-    { name: "事件應變與監控", icon: "🚨" },
+    { name: "政策與法規" },
+    { name: "ISMS 與稽核" },
+    { name: "組織與人員" },
+    { name: "風險與資產" },
+    { name: "事件應變與監控" },
   ],
   exam: {
     name: "考試",
@@ -22,13 +22,13 @@ const infosec: Subject = {
     essayPoint: 10,
     note: "複選題要全對才得分！",
   },
-  flavor: {
-    correctLines: ["防火牆擋下來了！", "稽核通過 ✅", "漏洞修補完成！", "資安長點頭了 🛡️", "這題你是白帽駭客"],
-    wrongLines: ["被駭了…", "稽核開出缺失！", "資安長皺眉了…", "趕快啟動應變程序！", "差一點點！"],
-    stampRight: "防禦",
-    stampWrong: "失守",
-    resultTitle: "資 安 稽 核 報 告",
-  },
+  highlights: [
+    "建立資安管理機制的主要目的是降低組織的資安風險；政策要適用全體員工，必要時包含合作廠商。",
+    "資產價值從機密性、完整性、可用性（CIA）評鑑；資料的機密等級由資料擁有者決定。",
+    "風險是外在威脅利用資產弱點造成的；加密能降低風險，但不能完全排除威脅。",
+    "PDCA 是計劃、執行、檢查、行動；內部稽核用來確認 ISMS 是否有效實作及維持。",
+    "事件應變看通報是否及時；可用性看非計畫內的服務中斷時數。",
+  ],
   questions: [
   {
     id: "s1", topic: "政策與法規", type: "choice",
@@ -209,6 +209,18 @@ const infosec: Subject = {
     options: ["提高公司股價", "促進員工溝通", "確保資訊安全的持續性、完整性及可用性", "減少 IT 部門的開支"],
     answer: 2,
     explanation: "ISMS 的目的是確保資訊的機密性、完整性、可用性（CIA）。",
+  },
+  {
+    id: "f1", topic: "ISMS 與稽核", type: "fill",
+    question: "PDCA 循環的四個步驟是：計劃、執行、檢查、＿＿。",
+    answer: ["行動", "Act"],
+    explanation: "PDCA 是計劃（Plan）、執行（Do）、檢查（Check）、行動（Act）。",
+  },
+  {
+    id: "f2", topic: "風險與資產", type: "fill",
+    question: "資訊資產價值從 CIA 三個面向評鑑：機密性、完整性、＿＿性。",
+    answer: ["可用", "可用性"],
+    explanation: "CIA 是機密性（Confidentiality）、完整性（Integrity）、可用性（Availability）。",
   },
 ],
   essays: [],

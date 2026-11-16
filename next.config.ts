@@ -1,13 +1,8 @@
 import type { NextConfig } from "next";
 
-// GitHub Pages 會放在 /<repo 名稱>/ 底下，部署時由 workflow 傳入 PAGES_BASE_PATH
-const basePath = process.env.PAGES_BASE_PATH || "";
-
+// 部署在 Vercel：需要後端（app/api/analyze）保管 AI 金鑰，所以不再輸出成純靜態網站。
 const nextConfig: NextConfig = {
-  output: "export",
-  basePath,
   images: { unoptimized: true },
-  trailingSlash: true,
 };
 
 export default nextConfig;

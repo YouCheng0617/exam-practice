@@ -3,3 +3,11 @@ node_modules
 out
 next-env.d.ts
 *.tsbuildinfo
+
+# next dev 自動產生
+AGENTS.md
+
+# 金鑰
+.env*.local
+.env
+.vercel

@@ -1,41 +1,55 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SUBJECTS } from "@/data/subjects";
-import type { EssayQ, ExamInfo, Question, Subject } from "@/data/types";
-import { sfx, sfx2 } from "@/lib/sound";
+import type { Subject } from "@/data/types";
+import { ACCEPT, MAX_PDF_MB, analyzeFile, parseSet } from "@/lib/analyze";
+import { sfx } from "@/lib/sound";
+import { DailyChart, SubjectChart, TrendChart } from "./Charts";
+import { Journal } from "./Journal";
+import { Compass, PlaneTrail, Scenery, Stamp } from "./Travel";
+import {
+  EMPTY,
+  KIND_LABEL,
+  accuracy,
+  allQuestions,
+  colorOf,
+  tripOf,
+  nextColor,
+  streak,
+  keyOf,
+  kindOf,
+  loadData,
+  recordAnswer,
+  saveData,
+  toggleMark,
+  topicStats,
+  typeLabel,
+  type AnyQ,
+  type Attempt,
+  type Data,
+  type JournalCard,
+  type Kind,
+  type TopicStat,
+} from "@/lib/store";
 
-type Mode = "challenge" | "practice" | "review" | "exam" | "essay";
-type Phase = "home" | "play" | "essay" | "end";
-type Picked = number | boolean | number[] | null;
-type Result = { q: Question; picked: Picked; correct: boolean };
-type EssayResult = { q: EssayQ; score: number; text: string };
+type Session = { set: Subject; items: AnyQ[]; mode: "practice" | "exam"; label: string };
+type Outcome = { q: AnyQ; ok: boolean; given: string };
+type View =
+  | { name: "library" }
+  | { name: "set"; id: string }
+  | { name: "practice"; session: Session; run: number }
+  | { name: "result"; session: Session; outcomes: Outcome[] }
+  | { name: "history" }
+  | { name: "journal" };
 
-const ROUND_SIZE = 10;
-const LIVES = 3;
-const TIME_LIMIT = 20;
-const MULTI_TIME_LIMIT = 30; // 複選題多給一點時間
+const MAX_FILE_MB = 20;
 
-const CORRECT_LINES = ["答對了！", "太神啦！", "完全正確 ✨", "這題難不倒你", "讚啦！", "穩穩的 👍"];
-const WRONG_LINES = ["答錯了…", "差一點點！", "再想想 😵", "下次一定會！", "沒關係，記起來就好"];
-const TIMEOUT_LINES = ["時間到了！⌛", "太慢囉～"];
+const pickOne = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
+const GOOD_LINES = ["順利抵達！", "路標看得懂！", "漂亮，繼續前進", "太會找路了！", "穩穩走到下一站"];
+const BAD_LINES = ["迷路了？看看路標再走一次", "差一點點，下一站會更好", "這條路也是學習的一部分", "再試一次，路就會熟了", "記下來，下次就認得了"];
+const tint = (c: string) => ({ "--c": c }) as React.CSSProperties;
 
-const COMBO_MSG: Record<number, string> = {
-  3: "🔥 三連對！",
-  5: "⚡ 五連對！",
-  7: "🌟 七連對・停不下來！",
-  10: "👑 十連對・學神降臨！",
-};
-
-function rank(acc: number) {
-  if (acc >= 0.95) return { title: "學神", emoji: "👑", line: "這科你根本可以去當助教了。" };
-  if (acc >= 0.8) return { title: "學霸", emoji: "🏆", line: "很穩！考試就照這樣寫。" };
-  if (acc >= 0.6) return { title: "穩穩過關", emoji: "💪", line: "大方向都對，錯的再看一下就好。" };
-  if (acc >= 0.4) return { title: "漸入佳境", emoji: "📚", line: "有概念了，多玩幾輪就會進步！" };
-  return { title: "剛起步", emoji: "🌱", line: "沒關係，錯題本會幫你記住的！" };
-}
-
-const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
 function shuffle<T>(arr: T[]) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -44,957 +58,1059 @@ function shuffle<T>(arr: T[]) {
   }
   return a;
 }
-function load<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    return v ? (JSON.parse(v) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-function save(key: string, v: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(v));
-  } catch {}
-}
 const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every((x) => b.includes(x));
-const isCorrect = (q: Question, p: Picked) => {
-  if (p === null) return false;
-  if (q.type === "multi") return Array.isArray(p) && sameSet(p, q.answer);
-  return p === q.answer;
-};
-const optLabel = (q: Question, i: number) => (q.type === "tf" ? "" : `${"ABCD"[i]}. ${q.options[i]}`);
-const multiText = (q: Question, arr: number[]) =>
-  arr.length ? [...arr].sort((a, b) => a - b).map((i) => optLabel(q, i)).join("、") : "（沒有勾選）";
-const answerText = (q: Question) =>
-  q.type === "tf" ? (q.answer ? "⭕ 對" : "❌ 錯") : q.type === "multi" ? multiText(q, q.answer) : optLabel(q, q.answer);
-const pickedText = (q: Question, p: Picked) =>
-  p === null ? "（逾時未答）" : Array.isArray(p) ? multiText(q, p) : typeof p === "boolean" ? (p ? "⭕ 對" : "❌ 錯") : optLabel(q, p);
-const timeFor = (q?: Question) => (q?.type === "multi" ? MULTI_TIME_LIMIT : TIME_LIMIT);
+const norm = (s: string) =>
+  s
+    .replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/\s+/g, "")
+    .toLowerCase();
+const letter = (i: number) => "ABCDEFGH"[i] ?? "";
 
-type Particle = { id: number; x: number; y: number; r: number; c: string; d: number };
-type Floater = { id: number; text: string };
-
-const examTotal = (e: ExamInfo) => e.choiceCount * e.choicePoint + e.essayCount * e.essayPoint;
-
-// 舊版（只有民法時）的紀錄搬到新的 key
-function migrate() {
-  try {
-    if (localStorage.getItem("clg_best") !== null && localStorage.getItem("civil-law:best") === null) {
-      localStorage.setItem("civil-law:best", localStorage.getItem("clg_best")!);
-      localStorage.setItem("civil-law:bestExam", localStorage.getItem("clg_best_exam") ?? "0");
-      localStorage.setItem("civil-law:wrong", localStorage.getItem("clg_wrong") ?? "[]");
-    }
-    if (localStorage.getItem("clg_sound") !== null && localStorage.getItem("sound") === null)
-      localStorage.setItem("sound", localStorage.getItem("clg_sound")!);
-  } catch {}
+function answerText(q: AnyQ): string {
+  if (q.type === "choice") return `${letter(q.answer)}. ${q.options[q.answer]}`;
+  if (q.type === "multi") return [...q.answer].sort((a, b) => a - b).map((i) => `${letter(i)}. ${q.options[i]}`).join("、");
+  if (q.type === "tf") return q.answer ? "對" : "錯";
+  if (q.type === "fill") return q.answer.join(" 或 ");
+  return q.answer.join(" ");
 }
 
-export default function Home() {
-  const [subject, setSubject] = useState<Subject | null>(null);
-  const [sound, setSound] = useState(true);
-  const [stats, setStats] = useState<Record<string, { best: number; wrong: number }>>({});
+// ---------- 小圖示 ----------
+const Check = () => (
+  <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden>
+    <path d="M4.5 10.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const Cross = () => (
+  <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden>
+    <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+  </svg>
+);
+const Bookmark = ({ on }: { on: boolean }) => (
+  <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden>
+    <path d="M5.5 3.5h9v13l-4.5-3.2-4.5 3.2z" fill={on ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+  </svg>
+);
+const UploadIcon = () => (
+  <svg viewBox="0 0 32 32" width="32" height="32" aria-hidden>
+    <path d="M16 21V7m0 0l-5.5 5.5M16 7l5.5 5.5M6 21v3.5h20V21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
-  useEffect(() => {
-    migrate();
-    setSound(load("sound", true));
+// ============================================================
+export default function Home() {
+  const [data, setData] = useState<Data>(EMPTY);
+  const [view, setView] = useState<View>({ name: "library" });
+
+  useEffect(() => setData(loadData()), []);
+
+  const update = useCallback((fn: (d: Data) => Data) => {
+    setData((d) => {
+      const n = fn(d);
+      saveData(n);
+      return n;
+    });
   }, []);
 
-  useEffect(() => {
-    if (subject) return;
-    const m: Record<string, { best: number; wrong: number }> = {};
-    SUBJECTS.forEach((s) => {
-      m[s.id] = { best: load(`${s.id}:bestExam`, 0), wrong: load<string[]>(`${s.id}:wrong`, []).length };
-    });
-    setStats(m);
-  }, [subject]);
+  const sets = useMemo(() => [...data.custom, ...SUBJECTS], [data.custom]);
 
-  function toggleSound() {
-    setSound((s) => {
-      save("sound", !s);
-      return !s;
-    });
-  }
-
-  function choose(s: Subject) {
-    if (sound) sfx.click();
-    setSubject(s);
+  function go(v: View) {
+    setView(v);
     window.scrollTo({ top: 0 });
   }
+  const start = (session: Session) => go({ name: "practice", session, run: Date.now() });
+
+  function finish(session: Session, outcomes: Outcome[]) {
+    if (!outcomes.length) return go({ name: "set", id: session.set.id });
+    const right = outcomes.filter((o) => o.ok).length;
+    const a: Attempt = {
+      id: Date.now().toString(36),
+      setId: session.set.id,
+      setName: session.set.name,
+      at: Date.now(),
+      mode: session.mode,
+      total: outcomes.length,
+      right,
+    };
+    const e = session.set.exam;
+    if (session.mode === "exam" && e) {
+      const pt = (q: AnyQ) => (q.type === "short" ? e.essayPoint : e.choicePoint);
+      a.score = outcomes.reduce((s, o) => s + (o.ok ? pt(o.q) : 0), 0);
+      a.max = session.items.reduce((s, q) => s + pt(q), 0);
+    }
+    update((d) => ({ ...d, attempts: [a, ...d.attempts].slice(0, 200) }));
+    go({ name: "result", session, outcomes });
+  }
+
+  const current = view.name === "set" ? sets.find((s) => s.id === view.id) : undefined;
+  const tab = view.name === "history" || view.name === "journal" ? view.name : "library";
+  const days = streak(data);
+  // 進到某一科時，整頁換成那一科的顏色
+  const themed = view.name === "practice" || view.name === "result" ? view.session.set : current;
 
   return (
     <>
-      <button className="sound-btn" onClick={toggleSound} aria-label="音效開關" title="音效開關">
-        {sound ? "🔊" : "🔇"}
-      </button>
-      {subject ? (
-        <Game key={subject.id} subject={subject} sound={sound} onBack={() => setSubject(null)} />
-      ) : (
-        <main className="app">
-          <section className="card home">
-            <div className="logo">📚</div>
-            <h1>考試題庫訓練</h1>
-            <p className="sub">選一個科目開始練習</p>
-            <div className="subjects">
-              {SUBJECTS.map((s) => (
-                <button key={s.id} className="subject" onClick={() => choose(s)}>
-                  <span className="s-icon">{s.icon}</span>
-                  <span className="s-body">
-                    <span className="s-name">{s.name}</span>
-                    <span className="s-desc">{s.desc}</span>
-                    <span className="s-meta">
-                      選擇 {s.questions.length} 題・問答 {s.essays.length} 題
-                      {stats[s.id]?.best ? `・模擬考最高 ${stats[s.id].best} 分` : ""}
-                      {stats[s.id]?.wrong ? `・錯題 ${stats[s.id].wrong}` : ""}
+      <header className="nav">
+        <div className="nav-in">
+          <button className="brand" onClick={() => go({ name: "library" })}>
+            <Compass />
+            <span className="brand-name">沿途</span>
+            <span className="brand-tag">過程本身，就是風景</span>
+          </button>
+          <nav>
+            <button className={tab === "library" ? "on" : ""} onClick={() => go({ name: "library" })}>
+              車站
+            </button>
+            <button className={tab === "journal" ? "on" : ""} onClick={() => go({ name: "journal" })}>
+              手帳
+            </button>
+            <button className={tab === "history" ? "on" : ""} onClick={() => go({ name: "history" })}>
+              足跡
+            </button>
+            {days > 0 && (
+              <span className="streak" title={`已經連續出發 ${days} 天`}>
+                🔥 {days} 天
+              </span>
+            )}
+            <button
+              className="sound"
+              onClick={() => update((d) => ({ ...d, sound: !d.sound }))}
+              aria-label={data.sound ? "關閉音效" : "開啟音效"}
+              title={data.sound ? "關閉音效" : "開啟音效"}
+            >
+              {data.sound ? "🔊" : "🔇"}
+            </button>
+          </nav>
+        </div>
+      </header>
+
+      <main
+        className="page"
+        style={themed ? tint(colorOf(themed)) : undefined}
+        key={view.name + (view.name === "set" ? view.id : "") + (view.name === "practice" ? view.run : "")}
+      >
+        {view.name === "library" && (
+          <Library
+            sets={sets}
+            data={data}
+            onOpen={(id) => go({ name: "set", id })}
+            onAdd={(added) => {
+              const s = { ...added, color: added.color ?? nextColor(sets) };
+              update((d) => ({ ...d, custom: [s, ...d.custom] }));
+              go({ name: "set", id: s.id });
+            }}
+          />
+        )}
+        {view.name === "set" &&
+          (current ? (
+            <SetPage
+              set={current}
+              data={data}
+              onBack={() => go({ name: "library" })}
+              onStart={start}
+              onDelete={() => {
+                update((d) => ({ ...d, custom: d.custom.filter((s) => s.id !== current.id) }));
+                go({ name: "library" });
+              }}
+            />
+          ) : (
+            <Library sets={sets} data={data} onOpen={(id) => go({ name: "set", id })} onAdd={() => {}} />
+          ))}
+        {view.name === "practice" && (
+          <Practice
+            session={view.session}
+            marks={data.marks}
+            sound={data.sound}
+            onAnswer={(key, ok, card) =>
+              update((d) => {
+                const n = recordAnswer(d, key, ok);
+                return n.journal.some((c) => c.key === key) ? n : { ...n, journal: [card, ...n.journal].slice(0, 2000) };
+              })
+            }
+            onMark={(key) => update((d) => toggleMark(d, key))}
+            onFinish={(o) => finish(view.session, o)}
+          />
+        )}
+        {view.name === "result" && (
+          <Result
+            session={view.session}
+            outcomes={view.outcomes}
+            sound={data.sound}
+            complete={tripOf(data, view.session.set).done}
+            onRetry={(items) => start({ ...view.session, items, mode: "practice", label: "回頭再走一次" })}
+            onBack={() => go({ name: "set", id: view.session.set.id })}
+          />
+        )}
+        {view.name === "journal" && <Journal sets={sets} data={data} onOpen={(id) => go({ name: "set", id })} />}
+        {view.name === "history" && <History sets={sets} data={data} onStart={start} onClear={() => update((d) => ({ ...d, stats: {}, attempts: [] }))} />}
+      </main>
+      {view.name !== "practice" && <Scenery />}
+    </>
+  );
+}
+
+// ============================================================
+// 題庫首頁
+// ============================================================
+function Library(props: { sets: Subject[]; data: Data; onOpen: (id: string) => void; onAdd: (s: Subject) => void }) {
+  const { sets, data, onOpen, onAdd } = props;
+  const [subject, setSubject] = useState("");
+  const [year, setYear] = useState("");
+
+  const names = [...new Set(sets.map((s) => s.name))];
+  const years = [...new Set(sets.map((s) => s.year).filter((y): y is string => !!y))].sort().reverse();
+  const shown = sets.filter((s) => (!subject || s.name === subject) && (!year || s.year === year));
+
+  return (
+    <>
+      <section className="hero">
+        <PlaneTrail />
+        <div className="hero-text">
+          <h1>
+            在不同的風景裡走一圈，
+            <br />
+            找到<mark>自己的答案</mark>。
+          </h1>
+          <p className="lead">每一科都是一個有自己風景和人文的地方。挑一張車票上車，重點不是分數，是沿途看懂了什麼——下一站也許就派得上用場。</p>
+        </div>
+        <Upload onAdd={onAdd} />
+      </section>
+
+      <section className="block">
+        <h2>今天想去哪一站？</h2>
+        {(names.length > 1 || years.length > 0) && (
+          <div className="filters">
+            {names.length > 1 && (
+              <div className="chips" role="group" aria-label="科目">
+                <button className={`chip ${subject === "" ? "on" : ""}`} onClick={() => setSubject("")}>
+                  全部路線
+                </button>
+                {names.map((n) => (
+                  <button key={n} className={`chip ${subject === n ? "on" : ""}`} onClick={() => setSubject(n)}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            )}
+            {years.length > 0 && (
+              <div className="chips" role="group" aria-label="年份">
+                <button className={`chip ${year === "" ? "on" : ""}`} onClick={() => setYear("")}>
+                  全部年份
+                </button>
+                {years.map((y) => (
+                  <button key={y} className={`chip ${year === y ? "on" : ""}`} onClick={() => setYear(y)}>
+                    {y}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="tickets">
+          {shown.map((s, i) => {
+            const qs = allQuestions(s);
+            const acc = accuracy(data, qs.map((q) => keyOf(s, q)));
+            const trip = tripOf(data, s);
+            return (
+              <button key={s.id} className={`ticket ${trip.done ? "done" : ""}`} style={tint(colorOf(s))} onClick={() => onOpen(s.id)}>
+                <span className="tk-main">
+                  <span className="tk-line">{["沿途鐵道", s.ai ? "AI 規劃" : s.custom ? "自由行" : "精選路線", s.year].filter(Boolean).join("・")}</span>
+                  <span className="tk-route">
+                    <small>出發</small>
+                    <i aria-hidden />
+                    <b>{s.name}</b>
+                  </span>
+                  <span className="tk-desc">{s.desc}</span>
+                  <span className="tk-info">
+                    <span>
+                      <small>路標</small>
+                      {qs.length} 題
+                    </span>
+                    <span>
+                      <small>抵達</small>
+                      {trip.arrived} / {trip.stations.length} 站
+                    </span>
+                    <span>
+                      <small>看懂</small>
+                      {acc.pct === null ? "—" : `${acc.pct}%`}
                     </span>
                   </span>
-                  <span className="s-go">›</span>
-                </button>
-              ))}
-              <div className="subject soon">＋ 更多科目準備中</div>
+                </span>
+                <span className="tk-stub">
+                  <small>STOP</small>
+                  <b>{String(i + 1).padStart(2, "0")}</b>
+                  <span className="tk-bar" aria-hidden />
+                  <span className="tk-go">{trip.done ? "再走一次" : trip.started ? "繼續旅程" : "上車"} ›</span>
+                </span>
+                {trip.done && <Stamp text="全線走完" sub="COMPLETED" className="tk-stamp red" />}
+              </button>
+            );
+          })}
+        </div>
+        {shown.length === 0 && <p className="empty">這條路線還沒有車票，換一個試試。</p>}
+      </section>
+    </>
+  );
+}
+
+// ---------- 上傳 ----------
+function Upload({ onAdd }: { onAdd: (s: Subject) => void }) {
+  const [drag, setDrag] = useState(false);
+  const [state, setState] = useState<{ kind: "idle" | "busy" | "pending" | "error"; file?: string; msg?: string }>({ kind: "idle" });
+  const input = useRef<HTMLInputElement>(null);
+
+  async function handle(file: File | undefined) {
+    if (!file) return;
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const info = `${file.name}・${(file.size / 1024 / 1024).toFixed(1)} MB`;
+    try {
+      if (!ACCEPT.split(",").includes(`.${ext}`)) throw new Error("目前支援 PDF、PowerPoint（.pptx）與 Word（.docx）。舊版的 .ppt、.doc 請先另存新檔。");
+      if (file.size > MAX_FILE_MB * 1024 * 1024) throw new Error(`檔案超過 ${MAX_FILE_MB} MB，請先拆成較小的檔案。`);
+      if (ext === "json") return onAdd(parseSet(await file.text()));
+      setState({ kind: "busy", file: info });
+      onAdd(await analyzeFile(file));
+    } catch (e) {
+      setState({ kind: "error", file: info, msg: e instanceof Error ? e.message : "處理檔案時發生問題，請再試一次。" });
+    }
+  }
+
+  return (
+    <section className="upload-wrap">
+      <div
+        className={`upload ${drag ? "drag" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDrag(true);
+        }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDrag(false);
+          handle(e.dataTransfer.files[0]);
+        }}
+      >
+        <span className="upload-icon">
+          <UploadIcon />
+        </span>
+        <p className="upload-title">帶一份考古題上車</p>
+        <p className="upload-sub">
+          PDF（{MAX_PDF_MB} MB 內）、PowerPoint、Word 都可以
+        </p>
+        <button className="btn primary" onClick={() => input.current?.click()} disabled={state.kind === "busy"}>
+          選擇檔案
+        </button>
+        <p className="upload-note">檔案會交給 Google 的 AI 整理，請不要上傳有個人資料的文件。</p>
+        <input
+          ref={input}
+          type="file"
+          accept={ACCEPT}
+          hidden
+          onChange={(e) => {
+            handle(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+      </div>
+
+      {state.kind !== "idle" && (
+        <div className={`notice ${state.kind}`} role="status">
+          <div>
+            <p className="notice-file">{state.file}</p>
+            {state.kind === "busy" && <p className="busy">正在規劃路線：讀檔、整理重點、立路標…大約半分鐘，先別離開這一頁。</p>}
+            {state.kind === "error" && <p>{state.msg}</p>}
+          </div>
+          {state.kind !== "busy" && (
+            <button className="link" onClick={() => setState({ kind: "idle" })}>
+              關閉
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ============================================================
+// 單一題庫
+// ============================================================
+function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart: (s: Session) => void; onDelete: () => void }) {
+  const { set, data, onBack, onStart, onDelete } = props;
+  const all = useMemo(() => allQuestions(set), [set]);
+  const kindsAvail = (["choice", "fill", "short"] as Kind[]).filter((k) => all.some((q) => kindOf(q) === k));
+  const [scope, setScope] = useState<"all" | "marked" | "wrong">("all");
+  const [kinds, setKinds] = useState<Kind[]>(kindsAvail);
+  const [confirmDel, setConfirmDel] = useState(false);
+
+  const marked = all.filter((q) => data.marks.includes(keyOf(set, q)));
+  const wrong = all.filter((q) => {
+    const s = data.stats[keyOf(set, q)];
+    return s && !s.last;
+  });
+  const base = scope === "marked" ? marked : scope === "wrong" ? wrong : all;
+  const items = base.filter((q) => kinds.includes(kindOf(q)));
+  const acc = accuracy(data, all.map((q) => keyOf(set, q)));
+  const trip = tripOf(data, set);
+  const e = set.exam;
+
+  function startExam() {
+    if (!e) return;
+    const c = shuffle(all.filter((q) => kindOf(q) === "choice")).slice(0, e.choiceCount);
+    const s = shuffle(all.filter((q) => q.type === "short")).slice(0, e.essayCount);
+    onStart({ set, items: [...c, ...s], mode: "exam", label: "模擬考" });
+  }
+  const examMax = e ? e.choiceCount * e.choicePoint + e.essayCount * e.essayPoint : 0;
+
+  return (
+    <>
+      <button className="back" onClick={onBack}>
+        ‹ 回車站
+      </button>
+      <section className="passport">
+        <div className="pp-page pp-id">
+          <span className="pp-label">PASSPORT・學習護照</span>
+          <h1>{set.name}</h1>
+          <p className="pp-desc">{set.desc}</p>
+          <dl className="pp-fields">
+            <div>
+              <dt>路標 Questions</dt>
+              <dd>{all.length}</dd>
             </div>
-          </section>
-        </main>
+            <div>
+              <dt>看懂 Accuracy</dt>
+              <dd className={acc.pct === null ? "muted" : "accent"}>{acc.pct === null ? "—" : `${acc.pct}%`}</dd>
+            </div>
+            <div>
+              <dt>還不熟 Marked</dt>
+              <dd>{marked.length}</dd>
+            </div>
+            <div>
+              <dt>路線 Type</dt>
+              <dd className="small">{[set.ai ? "AI 規劃" : set.custom ? "自由行" : "精選路線", set.year].filter(Boolean).join("・")}</dd>
+            </div>
+          </dl>
+          <p className="pp-mrz" aria-hidden>
+            {`P<KAOGUTI<<${set.id.toUpperCase().replace(/[^A-Z0-9]/g, "<")}`.padEnd(34, "<")}
+          </p>
+        </div>
+        <div className="pp-page pp-visa">
+          <span className="pp-label">
+            VISAS・入境章 {trip.arrived} / {trip.stations.length}
+          </span>
+          <div className="pp-stamps">
+            {trip.stations.map((x) => (
+              <span key={x.topic} className={`visa ${x.done ? "on" : ""}`}>
+                <b>{x.topic}</b>
+                <small>{x.done ? "已抵達" : `${x.cleared} / ${x.total}`}</small>
+              </span>
+            ))}
+          </div>
+          {trip.done ? (
+            <Stamp text="全線走完" sub="COMPLETED" className="pp-done red" />
+          ) : (
+            <p className="fine">一站裡的路標都看懂，就會蓋上那一站的入境章。</p>
+          )}
+        </div>
+      </section>
+
+      {set.ai && <p className="ai-note">這條路線是 AI 依你上傳的檔案規劃的，答案偶爾會出錯。覺得怪怪的，請對照原本的考古題。</p>}
+
+      <section className="panel">
+        <h2>這趟想怎麼走？</h2>
+        <div className="seg" role="group" aria-label="範圍">
+          {(
+            [
+              ["all", "全線", all.length],
+              ["marked", "還不熟", marked.length],
+              ["wrong", "上次迷路", wrong.length],
+            ] as const
+          ).map(([k, label, n]) => (
+            <button key={k} className={scope === k ? "on" : ""} onClick={() => setScope(k)}>
+              {label}
+              <small>{n}</small>
+            </button>
+          ))}
+        </div>
+        {kindsAvail.length > 1 && (
+          <div className="chips" role="group" aria-label="題型">
+            {kindsAvail.map((k) => (
+              <button
+                key={k}
+                className={`chip ${kinds.includes(k) ? "on" : ""}`}
+                aria-pressed={kinds.includes(k)}
+                onClick={() => setKinds((cur) => (cur.includes(k) ? cur.filter((x) => x !== k) : [...cur, k]))}
+              >
+                {KIND_LABEL[k]}・{base.filter((q) => kindOf(q) === k).length}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="actions">
+          <button
+            className="btn primary large"
+            disabled={items.length === 0}
+            onClick={() => onStart({ set, items: shuffle(items), mode: "practice", label: scope === "all" ? "練習" : scope === "marked" ? "還不熟的路標" : "上次迷路的路標" })}
+          >
+            {items.length ? `出發！${items.length} 題` : "這裡沒有路標"}
+          </button>
+          {e && (
+            <button className="btn large" onClick={startExam}>
+              模擬考・滿分 {examMax}
+            </button>
+          )}
+        </div>
+        {e && (
+          <p className="fine">
+            模擬考：
+            {e.choiceCount > 0 && `選擇 ${e.choiceCount} 題 × ${e.choicePoint} 分`}
+            {e.choiceCount > 0 && e.essayCount > 0 && "＋"}
+            {e.essayCount > 0 && `簡答 ${e.essayCount} 題 × ${e.essayPoint} 分`}
+            {e.note ? `。${e.note}` : ""}
+          </p>
+        )}
+      </section>
+
+      {set.highlights && set.highlights.length > 0 && (
+        <section className="block">
+          <h2>行前須知</h2>
+          <ol className="highlights">
+            {set.highlights.map((h, i) => (
+              <li key={i}>{h}</li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      <section className="block">
+        <h2>路線圖</h2>
+        <p className="fine route-hint">想從哪一站上車都可以，點一站就出發。</p>
+        <ol className="route">
+          {trip.stations.map((x) => (
+            <li key={x.topic} className={x.done ? "done" : x.seen ? "going" : ""}>
+              <button onClick={() => onStart({ set, items: shuffle(x.items), mode: "practice", label: `${x.topic}站` })}>
+                <span className="rt-dot" aria-hidden>
+                  {x.done && <Check />}
+                </span>
+                <span className="rt-name">
+                  {x.topic}
+                  <small>{x.done ? "已抵達，蓋章了" : x.seen ? `走到一半・看懂 ${x.cleared} / ${x.total}` : `還沒出發・${x.total} 個路標`}</small>
+                </span>
+                <span className="rt-go">{x.done ? "再走一次" : "出發"} ›</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      {set.custom && (
+        <p className="fine center">
+          {confirmDel ? (
+            <>
+              確定要丟掉這本護照嗎？紀錄不會留下。
+              <button className="link danger" onClick={onDelete}>
+                刪除
+              </button>
+              <button className="link" onClick={() => setConfirmDel(false)}>
+                取消
+              </button>
+            </>
+          ) : (
+            <button className="link" onClick={() => setConfirmDel(true)}>
+              丟掉這本護照
+            </button>
+          )}
+        </p>
+      )}
+    </>
+  );
+}
+
+// 主題掌握度列表：點一列就練習那個主題
+function TopicList({ rows, showSet, onStart }: { rows: TopicStat[]; showSet: boolean; onStart: (s: Session) => void }) {
+  return (
+    <ul className="topics">
+      {rows.map((r) => (
+        <li key={r.set.id + r.topic} style={tint(colorOf(r.set))}>
+          <button
+            onClick={() => {
+              const items = allQuestions(r.set).filter((q) => (q.topic ?? (q.type === "short" ? "簡答題" : "其他")) === r.topic);
+              onStart({ set: r.set, items: shuffle(items), mode: "practice", label: r.topic });
+            }}
+          >
+            <span className="topic-name">
+              {r.topic}
+              {showSet && <small>{r.set.name}</small>}
+            </span>
+            <span className="bar" aria-hidden>
+              <i style={{ width: `${r.pct}%` }} />
+            </span>
+            <span className="topic-pct">{r.pct}%</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// ============================================================
+// 作答
+// ============================================================
+function Practice(props: {
+  session: Session;
+  marks: string[];
+  sound: boolean;
+  onAnswer: (key: string, ok: boolean, card: JournalCard) => void;
+  onMark: (key: string) => void;
+  onFinish: (o: Outcome[]) => void;
+}) {
+  const { session, marks, sound, onAnswer, onMark, onFinish } = props;
+  const { set, items } = session;
+  const [idx, setIdx] = useState(0);
+  const [outcomes, setOutcomes] = useState<Outcome[]>([]);
+  const [sel, setSel] = useState<number[]>([]);
+  const [text, setText] = useState("");
+  const [revealed, setRevealed] = useState(false);
+  const [result, setResult] = useState<Outcome | null>(null);
+  const [combo, setCombo] = useState(0);
+  const [line, setLine] = useState("");
+
+  const q = items[idx];
+  const key = keyOf(set, q);
+  const last = idx + 1 >= items.length;
+  const done = idx + (result ? 1 : 0);
+
+  const answer = useCallback(
+    (ok: boolean, given: string) => {
+      if (result) return;
+      const o = { q, ok, given };
+      setResult(o);
+      setOutcomes((cur) => [...cur, o]);
+      const card: JournalCard = {
+        key,
+        setId: set.id,
+        setName: set.name,
+        topic: q.topic,
+        question: q.question,
+        answer: q.type === "short" ? "" : answerText(q),
+        note: q.type === "short" ? q.answer.join("；") : q.explanation || answerText(q),
+        at: Date.now(),
+      };
+      onAnswer(key, ok, card);
+      const c = ok ? combo + 1 : 0;
+      setCombo(c);
+      setLine(ok ? (c >= 3 ? `連對 ${c} 題，手感正熱！` : pickOne(GOOD_LINES)) : pickOne(BAD_LINES));
+      if (sound) (ok ? sfx.right(c) : sfx.wrong());
+    },
+    [result, q, key, onAnswer, combo, sound, set],
+  );
+
+  const next = useCallback(() => {
+    if (last) return onFinish(outcomes);
+    setIdx((i) => i + 1);
+    setSel([]);
+    setText("");
+    setRevealed(false);
+    setResult(null);
+    window.scrollTo({ top: 0 });
+  }, [last, outcomes, onFinish]);
+
+  const pick = useCallback(
+    (i: number) => {
+      if (result) return;
+      if (q.type === "choice") answer(i === q.answer, `${letter(i)}. ${q.options[i]}`);
+      if (q.type === "multi") setSel((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
+    },
+    [result, q, answer],
+  );
+  const submitMulti = useCallback(() => {
+    if (q.type !== "multi" || !sel.length) return;
+    const given = [...sel].sort((a, b) => a - b).map((i) => `${letter(i)}. ${q.options[i]}`).join("、");
+    answer(sameSet(sel, q.answer), given);
+  }, [q, sel, answer]);
+  function submitFill() {
+    if (q.type !== "fill" || !text.trim()) return;
+    answer(q.answer.some((a) => norm(a) === norm(text)), text.trim());
+  }
+
+  // 鍵盤：1–4 / A–D 選答，Enter 送出或下一題
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      if (e.key === "Enter" && result) {
+        e.preventDefault();
+        return next();
+      }
+      if (typing || result) return;
+      if (q.type === "choice" || q.type === "multi") {
+        const n = "1234".indexOf(e.key) >= 0 ? "1234".indexOf(e.key) : "abcd".indexOf(e.key.toLowerCase());
+        if (n >= 0 && n < q.options.length) pick(n);
+        else if (e.key === "Enter" && q.type === "multi") {
+          e.preventDefault(); // 避免同時觸發焦點所在的選項
+          submitMulti();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [q, result, next, pick, submitMulti]);
+
+  const isMarked = marks.includes(key);
+
+  return (
+    <div className="practice">
+      <div className="p-top">
+        <button className="link" onClick={() => onFinish(outcomes)}>
+          先下車
+        </button>
+        <span className="p-count">
+          <b>{idx + 1}</b> / {items.length}
+          {combo >= 2 && (
+            <span className="combo" key={combo}>
+              🔥 連對 {combo}
+            </span>
+          )}
+        </span>
+        <button className={`mark ${isMarked ? "on" : ""}`} onClick={() => onMark(key)} aria-pressed={isMarked}>
+          <Bookmark on={isMarked} />
+          {isMarked ? "已標記" : "還不熟"}
+        </button>
+      </div>
+      <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={items.length} aria-valuenow={done}>
+        <i style={{ width: `${(done / items.length) * 100}%` }} />
+      </div>
+
+      <article className={`q ${result && !result.ok ? "shake" : ""}`} key={q.id}>
+        <p className="eyebrow">
+          {[set.name, session.label !== "練習" ? session.label : "", q.topic, typeLabel(q)].filter(Boolean).join("・")}
+        </p>
+        <h1 className="q-text">{q.question}</h1>
+
+        {(q.type === "choice" || q.type === "multi") && (
+          <>
+            {q.type === "multi" && !result && <p className="fine">這題可以選很多個，全部選對才算過關。</p>}
+            <div className="options">
+              {q.options.map((o, i) => {
+                const chosen = q.type === "multi" ? sel.includes(i) : result?.given.startsWith(`${letter(i)}.`);
+                const right = q.type === "multi" ? q.answer.includes(i) : q.answer === i;
+                let cls = "opt";
+                if (chosen) cls += " sel";
+                if (result) cls += right ? " right" : chosen ? " wrong" : " dim";
+                return (
+                  <button key={i} className={cls} disabled={!!result} onClick={() => pick(i)} aria-pressed={!!chosen}>
+                    <span className="opt-key">{result && right ? <Check /> : result && chosen ? <Cross /> : letter(i)}</span>
+                    <span>{o}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {q.type === "multi" && !result && (
+              <button className="btn primary large" disabled={!sel.length} onClick={submitMulti}>
+                送出答案
+              </button>
+            )}
+          </>
+        )}
+
+        {q.type === "tf" && (
+          <div className="options two">
+            {[true, false].map((v) => {
+              const chosen = result?.given === (v ? "對" : "錯");
+              let cls = "opt center";
+              if (result) cls += v === q.answer ? " right" : chosen ? " wrong" : " dim";
+              return (
+                <button key={String(v)} className={cls} disabled={!!result} onClick={() => answer(v === q.answer, v ? "對" : "錯")}>
+                  {v ? "對" : "錯"}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {q.type === "fill" && (
+          <form
+            className="fill"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitFill();
+            }}
+          >
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="輸入答案"
+              disabled={!!result}
+              autoFocus
+              aria-label="答案"
+              className={result ? (result.ok ? "right" : "wrong") : ""}
+            />
+            {!result && (
+              <button className="btn primary large" disabled={!text.trim()}>
+                送出答案
+              </button>
+            )}
+          </form>
+        )}
+
+        {q.type === "short" && (
+          <>
+            {q.plain && <p className="plain">{q.plain}</p>}
+            {!revealed ? (
+              <>
+                <p className="fine">先在心裡想好答案，再翻開來對。</p>
+                <button className="btn primary large" onClick={() => setRevealed(true)}>
+                  翻開答案
+                </button>
+              </>
+            ) : (
+              <div className="feedback neutral">
+                <p className="fb-title">參考答案</p>
+                <ul className="points">
+                  {q.answer.map((a, i) => (
+                    <li key={i}>{a}</li>
+                  ))}
+                </ul>
+                {!result && (
+                  <div className="rate">
+                    <span>跟你想的一樣嗎？</span>
+                    <button className="btn primary" onClick={() => answer(true, "")}>
+                      有想到 👍
+                    </button>
+                    <button className="btn" onClick={() => answer(false, "")}>
+                      還不熟
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {result && q.type !== "short" && (
+          <div className={`feedback ${result.ok ? "good" : "bad"}`}>
+            <p className="fb-title">
+              <span className="fb-icon">{result.ok ? <Check /> : <Cross />}</span>
+              {line}
+            </p>
+            {!result.ok && (
+              <p className="fb-answer">
+                正確答案：<b>{answerText(q)}</b>
+              </p>
+            )}
+            {q.explanation && <p className="fb-exp">{q.explanation}</p>}
+          </div>
+        )}
+
+        {result && q.type === "short" && <p className={`cheer ${result.ok ? "good" : "bad"}`}>{result.ok ? line : "沒關係，已經幫你記下來，之後再練。"}</p>}
+
+        {result && (
+          <button className="btn primary large next" onClick={next} autoFocus>
+            {last ? "抵達終點" : "下一站"}
+          </button>
+        )}
+      </article>
+    </div>
+  );
+}
+
+// ============================================================
+// 結果
+// ============================================================
+function Result(props: { session: Session; outcomes: Outcome[]; sound: boolean; complete: boolean; onRetry: (items: AnyQ[]) => void; onBack: () => void }) {
+  const { session, outcomes, sound, complete, onRetry, onBack } = props;
+  useEffect(() => {
+    if (sound) sfx.done();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const right = outcomes.filter((o) => o.ok).length;
+  const pct = Math.round((right / outcomes.length) * 100);
+  const wrong = outcomes.filter((o) => !o.ok);
+  const e = session.set.exam;
+  const exam = session.mode === "exam" && e;
+  const pt = (q: AnyQ) => (e ? (q.type === "short" ? e.essayPoint : e.choicePoint) : 0);
+  const score = outcomes.reduce((s, o) => s + (o.ok ? pt(o.q) : 0), 0);
+  const max = session.items.reduce((s, q) => s + pt(q), 0);
+  const stars = pct >= 90 ? 3 : pct >= 60 ? 2 : pct > 0 ? 1 : 0;
+  const cheer = complete
+    ? "這條路線的每一站都抵達了，護照蓋滿章 🎉"
+    : pct === 100
+      ? "這一段的路標全都看懂了 🎉"
+      : pct >= 80
+        ? "走得很順，只有幾個路標要再看一眼"
+        : pct >= 60
+          ? "走了一大段路，迷路的地方最會記得"
+          : "這趟有點崎嶇，但走過就認得路了";
+
+  return (
+    <>
+      <section className="result">
+        {pct === 100 && (
+          <div className="confetti" aria-hidden>
+            {Array.from({ length: 18 }, (_, i) => (
+              <i key={i} style={{ left: `${(i * 53) % 100}%`, animationDelay: `${(i % 6) * 0.12}s`, background: ["#f0603c", "#ffb020", "#17a08c", "#d9457a"][i % 4] }} />
+            ))}
+          </div>
+        )}
+        <p className="eyebrow">
+          {session.set.name}・{session.label}
+        </p>
+        <Stamp text={complete ? "全線走完" : "抵達"} sub={session.set.name.slice(0, 8)} className={`result-stamp ${complete ? "red" : ""}`} />
+        <p className="stars" aria-label={`${stars} 顆星`}>
+          {[0, 1, 2].map((i) => (
+            <span key={i} className={i < stars ? "on" : ""} style={{ animationDelay: `${0.25 + i * 0.18}s` }}>
+              ★
+            </span>
+          ))}
+        </p>
+        <p className="big">
+          {exam ? score : pct}
+          <small>{exam ? ` / ${max}` : "%"}</small>
+        </p>
+        <p className="lead">
+          {cheer}
+          <br />
+          看懂 {right} / {outcomes.length} 個路標
+          {outcomes.length < session.items.length ? `（這段路共 ${session.items.length} 題，先在這裡下車）` : ""}
+        </p>
+        <p className="fine journal-note">✉️ 這一段的 {outcomes.length} 個路標，都寫成明信片收進手帳了。</p>
+        <div className="actions center">
+          {wrong.length > 0 && (
+            <button className="btn primary large" onClick={() => onRetry(wrong.map((o) => o.q))}>
+              回頭再走這 {wrong.length} 題
+            </button>
+          )}
+          <button className={`btn large ${wrong.length ? "" : "primary"}`} onClick={onBack}>
+            回到護照
+          </button>
+        </div>
+      </section>
+
+      {wrong.length > 0 && (
+        <section className="block">
+          <h2>這幾個路標再看一眼</h2>
+          <ul className="review">
+            {wrong.map(({ q, given }) => (
+              <li key={q.id}>
+                <p className="eyebrow">{[q.topic, typeLabel(q)].filter(Boolean).join("・")}</p>
+                <p className="r-q">{q.question}</p>
+                {given && <p className="r-given">你的答案：{given}</p>}
+                <p className="r-ans">
+                  正確答案：<b>{answerText(q)}</b>
+                </p>
+                {q.type !== "short" && q.explanation && <p className="r-exp">{q.explanation}</p>}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </>
   );
 }
 
 // ============================================================
-// 單一科目的遊戲
+// 紀錄與弱點分析
 // ============================================================
-function Game({ subject, sound, onBack }: { subject: Subject; sound: boolean; onBack: () => void }) {
-  const QUESTIONS = subject.questions;
-  const ESSAYS = subject.essays;
-  const EXAM = subject.exam;
-  const f = subject.flavor ?? {};
-  const correctLines = f.correctLines ?? CORRECT_LINES;
-  const wrongLines = f.wrongLines ?? WRONG_LINES;
-  const K = (k: string) => `${subject.id}:${k}`;
-
-  const [phase, setPhase] = useState<Phase>("home");
-  const [mode, setMode] = useState<Mode>("challenge");
-  const [deck, setDeck] = useState<Question[]>([]);
-  const [essayDeck, setEssayDeck] = useState<EssayQ[]>([]);
-  const [idx, setIdx] = useState(0);
-  const [eIdx, setEIdx] = useState(0);
-  const [picked, setPicked] = useState<Picked>(null);
-  const [multiSel, setMultiSel] = useState<number[]>([]);
-  const [answered, setAnswered] = useState(false);
-  const [line, setLine] = useState("");
-  const [score, setScore] = useState(0);
-  const [combo, setCombo] = useState(0);
-  const [maxCombo, setMaxCombo] = useState(0);
-  const [lives, setLives] = useState(LIVES);
-  const [time, setTime] = useState(TIME_LIMIT);
-  const [results, setResults] = useState<Result[]>([]);
-  const [essayResults, setEssayResults] = useState<EssayResult[]>([]);
-  const [hidden, setHidden] = useState<number[]>([]);
-  const [used5050, setUsed5050] = useState(false);
-  const [usedSkip, setUsedSkip] = useState(false);
-  const [comboBanner, setComboBanner] = useState("");
-  const [shake, setShake] = useState(false);
-  const [flash, setFlash] = useState<"" | "good" | "bad">("");
-  const [particles, setParticles] = useState<Particle[]>([]);
-  const [floaters, setFloaters] = useState<Floater[]>([]);
-  const [best, setBest] = useState(0);
-  const [bestExam, setBestExam] = useState(0);
-  const [wrongIds, setWrongIds] = useState<string[]>([]);
-  const [newRecord, setNewRecord] = useState(false);
-  const uid = useRef(0);
-
-  useEffect(() => {
-    setBest(load(K("best"), 0));
-    setBestExam(load(K("bestExam"), 0));
-    setWrongIds(load(K("wrong"), []));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const play = useCallback((fn: () => void) => sound && fn(), [sound]);
-
-  const q = deck[idx];
-  const timed = mode === "challenge";
-  const lifelines = mode === "challenge" || mode === "practice";
-
-  // ---------- 開始 ----------
-  function start(m: Mode) {
-    let d: Question[] = [];
-    let e: EssayQ[] = [];
-    if (m === "review") d = shuffle(QUESTIONS.filter((x) => wrongIds.includes(x.id)));
-    else if (m === "exam" && EXAM) {
-      d = shuffle(QUESTIONS).slice(0, EXAM.choiceCount);
-      e = shuffle(ESSAYS).slice(0, EXAM.essayCount);
-    } else if (m === "essay") e = shuffle(ESSAYS);
-    else {
-      const pool = shuffle(QUESTIONS);
-      d = m === "challenge" ? pool.slice(0, ROUND_SIZE) : pool;
-    }
-    if (d.length === 0 && e.length === 0) return;
-    setDeck(d);
-    setEssayDeck(e);
-    setMode(m);
-    setIdx(0);
-    setEIdx(0);
-    setPicked(null);
-    setMultiSel([]);
-    setAnswered(false);
-    setScore(0);
-    setCombo(0);
-    setMaxCombo(0);
-    setLives(LIVES);
-    setTime(timeFor(d[0]));
-    setResults([]);
-    setEssayResults([]);
-    setHidden([]);
-    setUsed5050(false);
-    setUsedSkip(false);
-    setNewRecord(false);
-    setPhase(d.length ? "play" : "essay");
-    play(d.length ? sfx.gavel : sfx2.bell);
-    window.scrollTo({ top: 0 });
-  }
-
-  // ---------- 特效 ----------
-  const burst = useCallback((n = 28) => {
-    const colors = ["#f5c542", "#4ade80", "#60a5fa", "#f472b6", "#fb923c", "#a78bfa"];
-    setParticles(
-      Array.from({ length: n }, () => ({
-        id: uid.current++,
-        x: (Math.random() - 0.5) * 560,
-        y: -Math.random() * 340 - 60,
-        r: Math.random() * 720 - 360,
-        c: pick(colors),
-        d: Math.random() * 0.3,
-      })),
-    );
-    setTimeout(() => setParticles([]), 1400);
-  }, []);
-  function floatText(text: string) {
-    const id = uid.current++;
-    setFloaters((f) => [...f, { id, text }]);
-    setTimeout(() => setFloaters((f) => f.filter((x) => x.id !== id)), 1100);
-  }
-  const flashScreen = useCallback((kind: "good" | "bad") => {
-    setFlash(kind);
-    setTimeout(() => setFlash(""), 450);
-  }, []);
-
-  // ---------- 選擇題作答 ----------
-  const submit = useCallback(
-    (choice: Picked) => {
-      if (!q || answered) return;
-      const ok = isCorrect(q, choice);
-      setPicked(choice);
-      setAnswered(true);
-      setResults((r) => [...r, { q, picked: choice, correct: ok }]);
-
-      if (ok) {
-        const c = combo + 1;
-        setCombo(c);
-        setMaxCombo((m) => Math.max(m, c));
-        let gain: number;
-        if (mode === "exam" && EXAM) {
-          gain = EXAM.choicePoint;
-          floatText(`+${gain} 分`);
-        } else {
-          const mult = 1 + Math.min(c - 1, 5) * 0.2;
-          gain = Math.round((100 + (timed ? time * 5 : 0)) * mult);
-          floatText(`+${gain}${c >= 2 ? ` ×${mult.toFixed(1)}` : ""}`);
-        }
-        setScore((s) => s + gain);
-        setLine(pick(correctLines));
-        if (COMBO_MSG[c]) {
-          setComboBanner(COMBO_MSG[c]);
-          setTimeout(() => setComboBanner(""), 1600);
-        }
-        burst();
-        flashScreen("good");
-        play(() => sfx.correct(c));
-        const w = wrongIds.filter((id) => id !== q.id);
-        setWrongIds(w);
-        save(K("wrong"), w);
-      } else {
-        setCombo(0);
-        if (mode === "challenge") setLives((l) => l - 1);
-        setLine(choice === null ? pick(TIMEOUT_LINES) : pick(wrongLines));
-        setShake(true);
-        setTimeout(() => setShake(false), 500);
-        flashScreen("bad");
-        play(sfx.wrong);
-        if (!wrongIds.includes(q.id)) {
-          const w = [...wrongIds, q.id];
-          setWrongIds(w);
-          save(K("wrong"), w);
-        }
-      }
-    },
-    [q, answered, combo, timed, time, mode, wrongIds, play, burst, flashScreen],
-  );
-
-  // ---------- 結束 ----------
-  const finish = useCallback(
-    (finalScore: number) => {
-      setPhase("end");
-      window.scrollTo({ top: 0 });
-      const key = mode === "exam" ? K("bestExam") : mode === "challenge" ? K("best") : null;
-      const prev = mode === "exam" ? bestExam : best;
-      if (key && finalScore > prev) {
-        if (mode === "exam") setBestExam(finalScore);
-        else setBest(finalScore);
-        save(key, finalScore);
-        setNewRecord(true);
-        burst(60);
-        play(sfx.fanfare);
-      } else {
-        play(finalScore > 0 ? sfx.fanfare : sfx.sad);
-      }
-    },
-    [mode, best, bestExam, play, burst],
-  );
-
-  const goNext = useCallback(() => {
-    if ((mode === "challenge" && lives <= 0) || idx + 1 >= deck.length) {
-      if (essayDeck.length) {
-        setPhase("essay");
-        play(sfx2.bell);
-        window.scrollTo({ top: 0 });
-      } else finish(score);
-      return;
-    }
-    setIdx((i) => i + 1);
-    setPicked(null);
-    setMultiSel([]);
-    setAnswered(false);
-    setHidden([]);
-    setTime(timeFor(deck[idx + 1]));
-    play(sfx.click);
-  }, [mode, lives, idx, deck, essayDeck.length, finish, score, play]);
-
-  const next = useCallback(() => answered && goNext(), [answered, goNext]);
-
-  function skip() {
-    if (usedSkip || answered || !q) return;
-    setUsedSkip(true);
-    goNext();
-  }
-  function toggleMulti(i: number) {
-    if (answered) return;
-    setMultiSel((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
-    play(sfx.click);
-  }
-  function fiftyFifty() {
-    if (used5050 || answered || !q || q.type !== "choice") return;
-    const wrong = q.options.map((_, i) => i).filter((i) => i !== q.answer);
-    setHidden(shuffle(wrong).slice(0, Math.max(0, q.options.length - 2)));
-    setUsed5050(true);
-    play(sfx.click);
-  }
-
-  // ---------- 問答題完成一題 ----------
-  function essayDone(r: EssayResult) {
-    const all = [...essayResults, r];
-    setEssayResults(all);
-    const total = score + r.score;
-    setScore(total);
-    if (eIdx + 1 >= essayDeck.length) finish(total);
-    else {
-      setEIdx((i) => i + 1);
-      play(sfx2.bell);
-      window.scrollTo({ top: 0 });
-    }
-  }
-
-  // ---------- 計時 ----------
-  useEffect(() => {
-    if (phase !== "play" || !timed || answered) return;
-    if (time <= 0) {
-      submit(q?.type === "multi" && multiSel.length ? multiSel : null);
-      return;
-    }
-    const t = setTimeout(() => {
-      setTime((x) => x - 1);
-      if (time <= 6) play(sfx.tick);
-    }, 1000);
-    return () => clearTimeout(t);
-  }, [phase, timed, answered, time, submit, play, q, multiSel]);
-
-  // ---------- 鍵盤 ----------
-  useEffect(() => {
-    if (phase !== "play" || !q) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (answered) {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          next();
-        }
-        return;
-      }
-      if (q.type === "choice" || q.type === "multi") {
-        const map: Record<string, number> = { "1": 0, "2": 1, "3": 2, "4": 3, a: 0, b: 1, c: 2, d: 3 };
-        const n = map[e.key.toLowerCase()];
-        if (q.type === "multi") {
-          if (n !== undefined && n < q.options.length) toggleMulti(n);
-          else if (e.key === "Enter" && multiSel.length) {
-            e.preventDefault();
-            submit(multiSel);
-          }
-        } else if (n !== undefined && n < q.options.length && !hidden.includes(n)) submit(n);
-      } else {
-        if (e.key.toLowerCase() === "o" || e.key === "1") submit(true);
-        if (e.key.toLowerCase() === "x" || e.key === "2") submit(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [phase, q, answered, hidden, next, submit, multiSel]);
-
-  const pool = QUESTIONS.length;
-  const totalSteps = deck.length + essayDeck.length;
-
-  // ============================================================
-  return (
-    <main className={`app ${flash ? `flash-${flash}` : ""}`}>
-      {phase === "home" && (
-        <section className="card home">
-          <button className="back" onClick={onBack}>
-            ‹ 換科目
-          </button>
-          <div className="logo">{subject.icon}</div>
-          <h1>{subject.name}</h1>
-          <p className="sub">{subject.desc}</p>
-
-          {EXAM && (
-            <div className="exam-box">
-              <div>
-                <b>📝 {EXAM.name}怎麼考</b>
-                <p>
-                  {EXAM.choiceCount > 0 && `選擇 ${EXAM.choiceCount} 題 × ${EXAM.choicePoint} 分`}
-                  {EXAM.choiceCount > 0 && EXAM.essayCount > 0 && "＋"}
-                  {EXAM.essayCount > 0 && `問答 ${EXAM.essayCount} 題 × ${EXAM.essayPoint} 分`}
-                  {(EXAM.weight || EXAM.note) && <br />}
-                  {EXAM.weight ? `占學期成績 ${Math.round(EXAM.weight * 100)}%` : ""}
-                  {EXAM.weight && EXAM.note ? "，" : ""}
-                  {EXAM.note && <b className="warn">{EXAM.note}</b>}
-                </p>
-              </div>
-              <button className="btn primary" onClick={() => start("exam")}>
-                📝 模擬考
-                <small>
-                  跟考試一樣的題數・滿分 {examTotal(EXAM)}
-                  {bestExam ? `・最高 ${bestExam} 分` : ""}
-                </small>
-              </button>
-            </div>
-          )}
-
-          <div className="modes">
-            {pool > 0 && (
-              <button className="btn" onClick={() => start("challenge")}>
-                🏛️ 闖關模式
-                <small>
-                  {Math.min(ROUND_SIZE, pool)} 題・{LIVES} 條命・限時作答
-                </small>
-              </button>
-            )}
-            <div className={pool > 0 && ESSAYS.length > 0 ? "modes row" : "modes"}>
-              {pool > 0 && (
-                <button className="btn" onClick={() => start("practice")}>
-                  📖 選擇題練習
-                  <small>慢慢來・{pool} 題</small>
-                </button>
-              )}
-              {ESSAYS.length > 0 && (
-                <button className="btn" onClick={() => start("essay")}>
-                  ✍️ 問答題練習
-                  <small>{ESSAYS.length} 題・想一想再看答案</small>
-                </button>
-              )}
-            </div>
-            {pool > 0 && (
-              <button className="btn" disabled={wrongIds.length === 0} onClick={() => start("review")}>
-                📕 錯題本
-                <small>{wrongIds.length ? `${wrongIds.length} 題等你復仇` : "目前沒有錯題 🎉"}</small>
-              </button>
-            )}
-          </div>
-
-          {pool > 0 && <p className="best">🏆 闖關最高分：{best}</p>}
-        </section>
-      )}
-
-      {phase === "play" && q && (
-        <section className={`card play ${shake ? "shake" : ""}`}>
-          <header className="hud">
-            {mode === "challenge" ? (
-              <span className="lives">
-                {Array.from({ length: LIVES }, (_, i) => (
-                  <span key={i} className={i < lives ? "heart" : "heart lost"}>
-                    ❤️
-                  </span>
-                ))}
-              </span>
-            ) : (
-              <span className="mode-tag">
-                {mode === "practice" ? "📖 練習" : mode === "review" ? "📕 錯題本" : "📝 模擬考・選擇題"}
-              </span>
-            )}
-            <span className="score">
-              {score}
-              <small> 分</small>
-            </span>
-            <span className={`combo ${combo >= 3 ? "hot" : ""}`}>{combo > 0 ? `🔥×${combo}` : ""}</span>
-          </header>
-
-          <div className="progress">
-            <div style={{ width: `${(idx / (totalSteps || 1)) * 100}%` }} />
-          </div>
-          <div className="meta">
-            <span className="tag">
-              {subject.topics?.find((t) => t.name === q.topic)?.icon ?? subject.icon} {q.topic ?? subject.name}
-            </span>
-            <span>
-              {q.type === "multi" && <span className="src multi">複選</span>}
-              第 {idx + 1} / {deck.length} 題
-            </span>
-          </div>
-
-          {timed && (
-            <div className={`timer ${time <= 5 && !answered ? "danger" : ""}`}>
-              <div style={{ width: `${(time / timeFor(q)) * 100}%` }} />
-              <span>{time}s</span>
-            </div>
-          )}
-
-          <h3 className="question">{q.question}</h3>
-
-          {q.type === "multi" ? (
-            <>
-              <p className="multi-hint">☑️ 複選題：勾選所有正確選項後送出（全對才得分）</p>
-              <div className="options">
-                {q.options.map((o, i) => {
-                  const sel = answered ? Array.isArray(picked) && picked.includes(i) : multiSel.includes(i);
-                  let cls = "opt check";
-                  if (sel) cls += " sel";
-                  if (answered) cls += q.answer.includes(i) ? " right" : sel ? " wrong" : " dim";
-                  return (
-                    <button key={i} className={cls} disabled={answered} onClick={() => toggleMulti(i)} aria-pressed={sel}>
-                      <span className="key">{sel ? "✔" : "ABCD"[i]}</span>
-                      {o}
-                    </button>
-                  );
-                })}
-              </div>
-              {!answered && (
-                <button className="btn primary next" disabled={multiSel.length === 0} onClick={() => submit(multiSel)}>
-                  📤 送出答案（已選 {multiSel.length} 個）
-                </button>
-              )}
-            </>
-          ) : q.type === "choice" ? (
-            <div className="options">
-              {q.options.map((o, i) => {
-                let cls = "opt";
-                if (hidden.includes(i)) cls += " gone";
-                if (answered) cls += i === q.answer ? " right" : i === picked ? " wrong" : " dim";
-                return (
-                  <button key={i} className={cls} disabled={answered || hidden.includes(i)} onClick={() => submit(i)}>
-                    <span className="key">{"ABCD"[i]}</span>
-                    {o}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="options tf">
-              {[true, false].map((v) => {
-                let cls = "opt big";
-                if (answered) cls += v === q.answer ? " right" : v === picked ? " wrong" : " dim";
-                return (
-                  <button key={String(v)} className={cls} disabled={answered} onClick={() => submit(v)}>
-                    {v ? "⭕ 對" : "❌ 錯"}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {!answered && lifelines && (
-            <div className="lifelines">
-              <button onClick={fiftyFifty} disabled={used5050 || q.type !== "choice"}>
-                💡 提示（刪去兩個）
-              </button>
-              <button onClick={skip} disabled={usedSkip}>
-                ⏭️ 跳過這題
-              </button>
-            </div>
-          )}
-
-          {answered && (
-            <div className={`feedback ${isCorrect(q, picked) ? "good" : "bad"}`}>
-              <div className="verdict">
-                <span className="stamp">{isCorrect(q, picked) ? f.stampRight ?? "正確" : f.stampWrong ?? "錯誤"}</span>
-                <span>{line}</span>
-              </div>
-              {!isCorrect(q, picked) && (
-                <p className="ans">
-                  {picked !== null && q.type === "multi" && (
-                    <>
-                      你的答案：{pickedText(q, picked)}
-                      <br />
-                    </>
-                  )}
-                  正確答案：<b>{answerText(q)}</b>
-                </p>
-              )}
-              <p className="exp">💡 {q.explanation}</p>
-              <button className="btn primary next" onClick={next}>
-                {(mode === "challenge" && lives <= 0) || idx + 1 >= deck.length
-                  ? essayDeck.length
-                    ? "進入問答題 →"
-                    : "看結果 →"
-                  : "下一題 →"}
-              </button>
-            </div>
-          )}
-
-          {floaters.map((f) => (
-            <span key={f.id} className="floater">
-              {f.text}
-            </span>
-          ))}
-          {comboBanner && <div className="combo-banner">{comboBanner}</div>}
-        </section>
-      )}
-
-      {phase === "essay" && essayDeck[eIdx] && (
-        <EssayCard
-          key={essayDeck[eIdx].id}
-          q={essayDeck[eIdx]}
-          n={eIdx + 1}
-          total={essayDeck.length}
-          exam={mode === "exam"}
-          score={score}
-          progress={(deck.length + eIdx) / (totalSteps || 1)}
-          last={eIdx + 1 >= essayDeck.length}
-          play={play}
-          burst={burst}
-          flash={flashScreen}
-          point={mode === "exam" && EXAM ? EXAM.essayPoint : 10}
-          onDone={essayDone}
-        />
-      )}
-
-      {phase === "end" && (
-        <EndScreen
-          results={results}
-          essayResults={essayResults}
-          score={score}
-          maxCombo={maxCombo}
-          mode={mode}
-          lives={lives}
-          newRecord={newRecord}
-          subject={subject}
-          onRetry={() => start(mode === "review" && wrongIds.length === 0 ? "challenge" : mode)}
-          onHome={() => setPhase("home")}
-        />
-      )}
-
-      <div className="confetti" aria-hidden>
-        {particles.map((p) => (
-          <i
-            key={p.id}
-            style={
-              { "--x": `${p.x}px`, "--y": `${p.y}px`, "--r": `${p.r}deg`, background: p.c, animationDelay: `${p.d}s` } as React.CSSProperties
-            }
-          />
-        ))}
-      </div>
-    </main>
-  );
-}
-
-// ============================================================
-// 問答題卡：想一想 → 看答案 → 自己評分
-// ============================================================
-const RATINGS = [
-  { score: 10, emoji: "😎", label: "都想到了", line: "太強了，這題穩拿！" },
-  { score: 6, emoji: "🤔", label: "想到一部分", line: "不錯喔，再看一次重點就記住了" },
-  { score: 2, emoji: "😵", label: "沒想到", line: "沒關係，現在看過就會了！" },
-];
-
-function EssayCard(props: {
-  q: EssayQ;
-  n: number;
-  total: number;
-  exam: boolean;
-  score: number;
-  progress: number;
-  last: boolean;
-  play: (fn: () => void) => void;
-  burst: (n?: number) => void;
-  flash: (k: "good" | "bad") => void;
-  point: number;
-  onDone: (r: EssayResult) => void;
-}) {
-  const { q, n, total, exam, score, progress, last, play, burst, flash, point, onDone } = props;
-  const [revealed, setRevealed] = useState(false);
-  const [rating, setRating] = useState<number | null>(null);
-
-  function reveal() {
-    setRevealed(true);
-    play(sfx2.paper);
-  }
-
-  function rate(i: number) {
-    if (rating !== null) return;
-    setRating(i);
-    const s = RATINGS[i].score;
-    if (s === 10) {
-      burst();
-      flash("good");
-      play(sfx.fanfare);
-    } else if (s >= 6) {
-      flash("good");
-      play(() => sfx.correct(1));
-    } else {
-      play(sfx.sad);
-    }
-  }
-
-  const r = rating !== null ? RATINGS[rating] : null;
-  const gain = r ? Math.round((r.score / 10) * point) : 0;
+function History(props: { sets: Subject[]; data: Data; onStart: (s: Session) => void; onClear: () => void }) {
+  const { sets, data, onStart, onClear } = props;
+  const [confirm, setConfirm] = useState(false);
+  const all = Object.values(data.stats);
+  const seen = all.reduce((s, x) => s + x.seen, 0);
+  const right = all.reduce((s, x) => s + x.right, 0);
+  const topics = topicStats(data, sets);
+  const weak = topics.filter((t) => t.pct < 80).slice(0, 6);
+  const fmt = (t: number) => new Date(t).toLocaleString("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
   return (
-    <section className="card essay">
-      <header className="hud">
-        <span className="mode-tag">{exam ? "📝 模擬考・問答題" : "✍️ 問答題"}</span>
-        <span className="score">
-          {score}
-          <small> 分</small>
-        </span>
-        <span className="mode-tag">
-          第 {n} / {total} 題
-        </span>
-      </header>
-      <div className="progress">
-        <div style={{ width: `${progress * 100}%` }} />
-      </div>
+    <>
+      <section className="set-head has-deco">
+        <h1>我的足跡</h1>
+        <p className="lead">{streak(data) > 0 ? `已經連續出發 ${streak(data)} 天，慢慢走也沒關係。` : "走過的每一段路，都會記在這台裝置上。"}</p>
+      </section>
 
-      <span className="tag">✍️ {q.title}</span>
-      <h3 className="question pre">{q.question}</h3>
-      {q.plain && <p className="plain">💬 簡單說：{q.plain}</p>}
+      <section className="figures">
+        <div>
+          <b>{data.attempts.length}</b>
+          <span>出發次數</span>
+        </div>
+        <div>
+          <b>{seen}</b>
+          <span>走過的路標</span>
+        </div>
+        <div>
+          <b className={seen ? "accent" : "muted"}>{seen ? `${Math.round((right / seen) * 100)}%` : "—"}</b>
+          <span>答對率</span>
+        </div>
+      </section>
 
-      {!revealed && (
+      {seen === 0 ? (
+        <p className="empty">還沒有足跡，挑一張車票出發吧！</p>
+      ) : (
         <>
-          <p className="think">先在心裡想一想答案，想好了再打開 👇</p>
-          <button className="btn primary next" onClick={reveal}>
-            💡 看答案
-          </button>
-        </>
-      )}
+          <section className="block charts">
+            <DailyChart attempts={data.attempts} />
+            <TrendChart attempts={data.attempts} />
+            <SubjectChart sets={sets} data={data} />
+          </section>
 
-      {revealed && (
-        <div className="essay-result">
-          <ul className="model">
-            {q.answer.map((a, i) => (
-              <li key={i} style={{ animationDelay: `${i * 0.15}s` }}>
-                {a}
-              </li>
-            ))}
-          </ul>
+          <section className="block">
+            <h2>這幾站值得再去一次</h2>
+            {weak.length > 0 ? (
+              <>
+                <p className="fine">答對率還沒到 80% 的主題，點一下就能直接練。</p>
+                <TopicList rows={weak} showSet onStart={onStart} />
+              </>
+            ) : (
+              <p className="fine">練過的主題答對率都有 80% 以上，太強了。</p>
+            )}
+          </section>
 
-          {r === null ? (
-            <>
-              <p className="ask">你剛剛想的跟答案差不多嗎？</p>
-              <div className="rate">
-                {RATINGS.map((x, i) => (
-                  <button key={i} onClick={() => rate(i)}>
-                    <span className="rate-emoji">{x.emoji}</span>
-                    {x.label}
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className={`essay-score ${r.score >= 10 ? "good" : r.score >= 6 ? "mid" : "bad"}`}>
-                <span className="big-num">
-                  {r.emoji} +{gain}
-                </span>
-                <span className="essay-verdict">{r.line}</span>
-              </div>
-              <button className="btn primary next" onClick={() => onDone({ q, score: gain, text: "" })}>
-                {last ? "看結果 →" : "下一題 →"}
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
-// ============================================================
-// 結算
-// ============================================================
-function EndScreen(props: {
-  results: Result[];
-  essayResults: EssayResult[];
-  score: number;
-  maxCombo: number;
-  mode: Mode;
-  lives: number;
-  newRecord: boolean;
-  subject: Subject;
-  onRetry: () => void;
-  onHome: () => void;
-}) {
-  const { results, essayResults, score, maxCombo, mode, lives, newRecord, subject, onRetry, onHome } = props;
-  const EXAM = subject.exam;
-  const total = EXAM ? examTotal(EXAM) : 100;
-  const right = results.filter((r) => r.correct).length;
-  const choiceScore = right * (EXAM?.choicePoint ?? 0);
-  const essayScore = essayResults.reduce((s, r) => s + r.score, 0);
-
-  let acc: number;
-  if (mode === "exam") acc = score / total;
-  else if (mode === "essay") acc = essayResults.length ? essayScore / (essayResults.length * 10) : 0;
-  else acc = results.length ? right / results.length : 0;
-
-  const r = rank(acc);
-  const wrong = results.filter((x) => !x.correct);
-  const weakEssays = essayResults.filter((x) => x.score < 10);
-  const stars = acc >= 0.9 ? 3 : acc >= 0.6 ? 2 : acc > 0 ? 1 : 0;
-
-  return (
-    <section className="card end">
-      {newRecord && <div className="record">🎉 新紀錄！</div>}
-      <div className="doc">
-        <p className="doc-title">{subject.flavor?.resultTitle ?? "成 績 單"}</p>
-        <p className="doc-no">
-          {subject.name}・{mode === "exam" ? `${EXAM?.name ?? ""}模擬考` : mode === "essay" ? "問答練習" : mode === "challenge" ? "闖關" : "練習"}
-        </p>
-        <p className="main-text">
-          {mode === "challenge" && lives <= 0
-            ? "三條命用完了，休息一下再來挑戰！"
-            : mode === "exam"
-              ? `模擬考得 ${score} 分${score >= total * 0.6 ? "，及格！🎉" : "，還差一點，再考一次！"}` +
-                (EXAM?.weight ? `換算學期成績 ${((score / total) * EXAM.weight * 100).toFixed(1)} / ${Math.round(EXAM.weight * 100)} 分。` : "")
-              : acc >= 0.6
-                ? "表現不錯，繼續保持！"
-                : "多練幾次就會進步，錯的題目都收進錯題本了！"}
-        </p>
-        <div className="rank">
-          <span className="rank-emoji">{r.emoji}</span>
-          <div>
-            <div className="rank-title">{r.title}</div>
-            <div className="rank-line">{r.line}</div>
-          </div>
-        </div>
-        <div className="stars">
-          {[0, 1, 2].map((i) => (
-            <span key={i} className={i < stars ? "star on" : "star"} style={{ animationDelay: `${i * 0.25}s` }}>
-              ★
-            </span>
-          ))}
-        </div>
-
-        {mode === "exam" ? (
-          <div className="stats">
-            <div>
-              <b>{score}</b>
-              <small>總分 / {total}</small>
-            </div>
-            <div>
-              <b>{choiceScore}</b>
-              <small>選擇 / {(EXAM?.choiceCount ?? 0) * (EXAM?.choicePoint ?? 0)}</small>
-            </div>
-            <div>
-              <b>{essayScore}</b>
-              <small>問答 / {(EXAM?.essayCount ?? 0) * (EXAM?.essayPoint ?? 0)}</small>
-            </div>
-            <div>
-              <b>
-                {right}/{results.length}
-              </b>
-              <small>選擇答對</small>
-            </div>
-          </div>
-        ) : mode === "essay" ? (
-          <div className="stats three">
-            <div>
-              <b>{essayScore}</b>
-              <small>總分 / {essayResults.length * 10}</small>
-            </div>
-            <div>
-              <b>{essayResults.length ? (essayScore / essayResults.length).toFixed(1) : 0}</b>
-              <small>平均每題</small>
-            </div>
-            <div>
-              <b>{essayResults.filter((x) => x.score >= 10).length}</b>
-              <small>都想到的題數</small>
-            </div>
-          </div>
-        ) : (
-          <div className="stats">
-            <div>
-              <b>{score}</b>
-              <small>總分</small>
-            </div>
-            <div>
-              <b>
-                {right}/{results.length}
-              </b>
-              <small>答對</small>
-            </div>
-            <div>
-              <b>{Math.round(acc * 100)}%</b>
-              <small>正確率</small>
-            </div>
-            <div>
-              <b>{maxCombo}</b>
-              <small>最高連勝</small>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {(wrong.length > 0 || weakEssays.length > 0) && (
-        <div className="review">
-          <h3>📕 錯題回顧</h3>
-          {wrong.map(({ q, picked }) => (
-            <details key={q.id}>
-              <summary>{q.question}</summary>
-              <p>你的答案：{pickedText(q, picked)}</p>
-              <p>
-                正確答案：<b>{answerText(q)}</b>
-              </p>
-              <p className="exp">💡 {q.explanation}</p>
-            </details>
-          ))}
-          {weakEssays.map(({ q, score: s }) => (
-            <details key={q.id}>
-              <summary>
-                ✍️ {q.title}（{s} / 10 分）
-              </summary>
-              <ul className="model">
-                {q.answer.map((a, i) => (
-                  <li key={i}>{a}</li>
+          {data.attempts.length > 0 && (
+            <section className="block">
+              <h2>旅程紀錄</h2>
+              <ul className="attempts">
+                {data.attempts.map((a) => (
+                  <li key={a.id}>
+                    <span className="a-main">
+                      {a.setName}
+                      <small>
+                        {a.mode === "exam" ? "模擬考" : "練習"}・{fmt(a.at)}
+                      </small>
+                    </span>
+                    <span className="a-num">
+                      {a.score !== undefined ? `${a.score} / ${a.max} 分` : `${Math.round((a.right / a.total) * 100)}%`}
+                      <small>
+                        答對 {a.right} / {a.total}
+                      </small>
+                    </span>
+                  </li>
                 ))}
               </ul>
-            </details>
-          ))}
-        </div>
-      )}
+            </section>
+          )}
 
-      <div className="modes row">
-        <button className="btn primary" onClick={onRetry}>
-          🔁 再來一局
-        </button>
-        <button className="btn" onClick={onHome}>
-          🏠 回科目首頁
-        </button>
-      </div>
-    </section>
+          <p className="fine center">
+            {confirm ? (
+              <>
+                確定要清除所有作答紀錄嗎？
+                <button
+                  className="link danger"
+                  onClick={() => {
+                    onClear();
+                    setConfirm(false);
+                  }}
+                >
+                  清除
+                </button>
+                <button className="link" onClick={() => setConfirm(false)}>
+                  取消
+                </button>
+              </>
+            ) : (
+              <button className="link" onClick={() => setConfirm(true)}>
+                清除作答紀錄
+              </button>
+            )}
+          </p>
+        </>
+      )}
+    </>
   );
 }
