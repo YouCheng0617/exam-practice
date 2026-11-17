@@ -6,13 +6,13 @@ import type { EssayQ, Question, Subject } from "@/data/types";
 
 export type ShortQ = EssayQ & { type: "short" };
 export type AnyQ = Question | ShortQ;
-export type Kind = "choice" | "fill" | "short";
+export type Kind = "choice" | "fill" | "short" | "order";
 
-export const KIND_LABEL: Record<Kind, string> = { choice: "選擇題", fill: "填空題", short: "簡答題" };
+export const KIND_LABEL: Record<Kind, string> = { choice: "選擇題", fill: "填空題", short: "簡答題", order: "排序題" };
 
-export const kindOf = (q: AnyQ): Kind => (q.type === "fill" ? "fill" : q.type === "short" ? "short" : "choice");
+export const kindOf = (q: AnyQ): Kind => (q.type === "fill" ? "fill" : q.type === "short" ? "short" : q.type === "order" ? "order" : "choice");
 export const typeLabel = (q: AnyQ) =>
-  q.type === "choice" ? "單選題" : q.type === "multi" ? "複選題" : q.type === "tf" ? "是非題" : q.type === "fill" ? "填空題" : "簡答題";
+  q.type === "choice" ? "單選題" : q.type === "multi" ? "複選題" : q.type === "tf" ? "是非題" : q.type === "fill" ? "填空題" : q.type === "order" ? "排序題" : "簡答題";
 
 export const allQuestions = (s: Subject): AnyQ[] => [...s.questions, ...s.essays.map((e) => ({ ...e, type: "short" as const }))];
 export const keyOf = (s: Subject, q: AnyQ) => `${s.id}/${q.id}`;
@@ -47,12 +47,14 @@ export type Data = {
   attempts: Attempt[]; // 歷次作答紀錄（新的在前）
   custom: Subject[]; // 使用者加入的題庫
   journal: JournalCard[]; // 旅行手帳（新的在前）
+  prefs: Record<string, string>; // 每份題庫選的出題範圍
+  focus: Record<string, number>; // 旅行鐘：每天探險（專心）的分鐘數，key 是 YYYY-MM-DD
   days: string[]; // 有練習的日期（YYYY-MM-DD），用來算連續天數
   sound: boolean; // 音效開關
 };
 
 const KEY = "kaoguti:v1";
-export const EMPTY: Data = { stats: {}, marks: [], attempts: [], custom: [], journal: [], days: [], sound: true };
+export const EMPTY: Data = { stats: {}, marks: [], attempts: [], custom: [], journal: [], prefs: {}, focus: {}, days: [], sound: true };
 
 export const dayStr = (t: number) => new Date(t).toLocaleDateString("sv"); // YYYY-MM-DD（當地時間）
 
@@ -144,10 +146,15 @@ export function topicStats(d: Data, sets: Subject[]): TopicStat[] {
 export const topicOf = (q: AnyQ) => q.topic ?? (q.type === "short" ? "簡答題" : "其他");
 export type Station = { topic: string; items: AnyQ[]; total: number; seen: number; cleared: number; done: boolean };
 
-export function stations(d: Data, set: Subject): Station[] {
+// 出題範圍：題目沒有 tags 就每個範圍都算
+export const inMode = (q: AnyQ, mode?: string) => !mode || !("tags" in q) || !q.tags || q.tags.includes(mode);
+export const modeOf = (d: Data, s: Subject) =>
+  s.modes?.length ? (s.modes.some((m) => m.id === d.prefs?.[s.id]) ? d.prefs[s.id] : s.modes[0].id) : undefined;
+
+export function stations(d: Data, set: Subject, mode = modeOf(d, set)): Station[] {
   const order = (set.topics ?? []).map((t) => t.name);
   const groups = new Map<string, AnyQ[]>(order.map((t) => [t, []]));
-  for (const q of allQuestions(set)) groups.set(topicOf(q), [...(groups.get(topicOf(q)) ?? []), q]);
+  for (const q of allQuestions(set)) if (inMode(q, mode)) groups.set(topicOf(q), [...(groups.get(topicOf(q)) ?? []), q]);
   return [...groups]
     .filter(([, items]) => items.length > 0)
     .map(([topic, items]) => {

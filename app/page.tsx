@@ -8,6 +8,7 @@ import { decodeSet, readShareHash, shareKeyOf, shareUrl } from "@/lib/share";
 import { sfx } from "@/lib/sound";
 import { DailyChart, SubjectChart, TrendChart } from "./Charts";
 import { Journal } from "./Journal";
+import { TimerBadge, TimerPage, useTravelTimer } from "./Timer";
 import { Compass, InkDefs, Mascot, PlaneTrail, Scenery, Stamp, VisaStamp } from "./Travel";
 import {
   EMPTY,
@@ -15,9 +16,12 @@ import {
   accuracy,
   allQuestions,
   colorOf,
+  inMode,
+  modeOf,
   tripOf,
   nextColor,
   streak,
+  dayStr,
   keyOf,
   kindOf,
   loadData,
@@ -42,7 +46,8 @@ type View =
   | { name: "practice"; session: Session; run: number }
   | { name: "result"; session: Session; outcomes: Outcome[] }
   | { name: "history" }
-  | { name: "journal" };
+  | { name: "journal" }
+  | { name: "timer" };
 
 const MAX_FILE_MB = 20;
 
@@ -104,6 +109,7 @@ function answerText(q: AnyQ): string {
   if (q.type === "choice") return `${letter(q.answer)}. ${q.options[q.answer]}`;
   if (q.type === "multi") return [...q.answer].sort((a, b) => a - b).map((i) => `${letter(i)}. ${q.options[i]}`).join("、");
   if (q.type === "tf") return q.answer ? "對" : "錯";
+  if (q.type === "order") return q.answer.join(" → ");
   if (q.type === "fill") return q.answer.join(" 或 ");
   return q.answer.join(" ");
 }
@@ -159,7 +165,17 @@ export default function Home() {
     });
   }, []);
 
-  const sets = useMemo(() => [...data.custom, ...SUBJECTS], [data.custom]);
+  const sets = useMemo(() => [...SUBJECTS, ...data.custom], [data.custom]);
+
+  // 旅行鐘：探險的分鐘數記進今天，也算一天有出發
+  const timer = useTravelTimer({
+    sound: data.sound,
+    onFocus: (min) =>
+      update((d) => {
+        const day = dayStr(Date.now());
+        return { ...d, focus: { ...d.focus, [day]: (d.focus?.[day] ?? 0) + min }, days: d.days.includes(day) ? d.days : [...d.days, day].slice(-400) };
+      }),
+  });
 
   function go(v: View) {
     setView(v);
@@ -204,8 +220,9 @@ export default function Home() {
   }
 
   const current = view.name === "set" ? sets.find((s) => s.id === view.id) : undefined;
-  const tab = view.name === "history" || view.name === "journal" ? view.name : "library";
+  const tab = view.name === "history" || view.name === "journal" || view.name === "timer" ? view.name : "library";
   const days = streak(data);
+  const today = dayStr(Date.now());
   // 進到某一科時，整頁換成那一科的顏色
   const themed = view.name === "practice" || view.name === "result" ? view.session.set : current;
 
@@ -223,12 +240,16 @@ export default function Home() {
             <button className={tab === "library" ? "on" : ""} onClick={() => go({ name: "library" })}>
               車站
             </button>
+            <button className={tab === "timer" ? "on" : ""} onClick={() => go({ name: "timer" })}>
+              旅行鐘
+            </button>
             <button className={tab === "journal" ? "on" : ""} onClick={() => go({ name: "journal" })}>
               手帳
             </button>
             <button className={tab === "history" ? "on" : ""} onClick={() => go({ name: "history" })}>
               足跡
             </button>
+            {view.name !== "timer" && <TimerBadge t={timer} onOpen={() => go({ name: "timer" })} />}
             {days > 0 && (
               <span className="streak" title={`已經連續出發 ${days} 天`}>
                 🔥 {days} 天
@@ -270,6 +291,7 @@ export default function Home() {
               data={data}
               onBack={() => go({ name: "library" })}
               onStart={start}
+              onPref={(m) => update((d) => ({ ...d, prefs: { ...d.prefs, [current.id]: m } }))}
               onDelete={() => {
                 update((d) => ({ ...d, custom: d.custom.filter((s) => s.id !== current.id) }));
                 go({ name: "library" });
@@ -303,6 +325,7 @@ export default function Home() {
             onBack={() => go({ name: "set", id: view.session.set.id })}
           />
         )}
+        {view.name === "timer" && <TimerPage t={timer} todayMin={data.focus?.[today] ?? 0} />}
         {view.name === "journal" && <Journal sets={sets} data={data} onOpen={(id) => go({ name: "set", id })} />}
         {view.name === "history" && <History sets={sets} data={data} onStart={start} onClear={() => update((d) => ({ ...d, stats: {}, attempts: [] }))} />}
       </main>
@@ -349,9 +372,18 @@ function Library(props: { sets: Subject[]; data: Data; onOpen: (id: string) => v
   const [subject, setSubject] = useState("");
   const [year, setYear] = useState("");
 
-  const names = [...new Set(sets.map((s) => s.name))];
+  const groupOf = (s: Subject) => s.group ?? s.name; // 同一類（例如五十音主線和支線）歸在同一個篩選按鈕
+  const names = [...new Set(sets.map(groupOf))];
   const years = [...new Set(sets.map((s) => s.year).filter((y): y is string => !!y))].sort().reverse();
-  const shown = sets.filter((s) => (!subject || s.name === subject) && (!year || s.year === year));
+  const shown = sets.filter((s) => (!subject || groupOf(s) === subject) && (!year || s.year === year));
+  // 站號：內建題庫用自己的（01、01-1），使用者的題庫依加入的先後接著編
+  const mainMax = Math.max(0, ...sets.map((s) => parseInt(s.stop ?? "", 10)).filter((n) => !Number.isNaN(n)));
+  const autoStop = new Map(
+    sets
+      .filter((s) => !s.stop)
+      .reverse()
+      .map((s, i) => [s.id, String(mainMax + i + 1).padStart(2, "0")]),
+  );
 
   return (
     <>
@@ -401,7 +433,7 @@ function Library(props: { sets: Subject[]; data: Data; onOpen: (id: string) => v
 
         <div className="tickets">
           {shown.map((s, i) => {
-            const qs = allQuestions(s);
+            const qs = allQuestions(s).filter((q) => inMode(q, modeOf(data, s)));
             const acc = accuracy(data, qs.map((q) => keyOf(s, q)));
             const trip = tripOf(data, s);
             return (
@@ -431,7 +463,7 @@ function Library(props: { sets: Subject[]; data: Data; onOpen: (id: string) => v
                 </span>
                 <span className="tk-stub">
                   <small>STOP</small>
-                  <b>{String(i + 1).padStart(2, "0")}</b>
+                  <b className={(s.stop ?? "").length > 3 ? "long" : ""}>{s.stop ?? autoStop.get(s.id)}</b>
                   <span className="tk-bar" aria-hidden />
                   <span className="tk-go">{trip.done ? "再走一次" : trip.started ? "繼續旅程" : "上車"} ›</span>
                 </span>
@@ -440,7 +472,7 @@ function Library(props: { sets: Subject[]; data: Data; onOpen: (id: string) => v
             );
           })}
         </div>
-        {shown.length === 0 && <p className="empty"><Mascot mood="wow" className="m-empty" />{sets.length === 0 ? "還沒有車票。上傳一份考古題，或打開朋友分享給你的連結，就能出發。" : "這條路線還沒有車票，換一個試試。"}</p>}
+        {shown.length === 0 && <p className="empty"><Mascot mood="wow" className="m-empty" />{sets.length === 0 ? "還沒有車票。上傳一份練習題，或打開朋友分享給你的連結，就能出發。" : "這條路線還沒有車票，換一個試試。"}</p>}
       </section>
 
       <section className="block buddy">
@@ -484,7 +516,7 @@ function Upload({ onAdd }: { onAdd: (s: Subject) => void }) {
   return (
     <section className="upload-wrap">
       <Mascot mood={state.kind === "busy" ? "wait" : "wave"} className="m-upload" />
-      <p className="m-bubble hand">{state.kind === "busy" ? "雪丸正在規劃路線…" : "我是雪丸！帶一份考古題來，我們一起出發。"}</p>
+      <p className="m-bubble hand">{state.kind === "busy" ? "雪丸正在規劃路線…" : "我是雪丸！帶一份練習題來，我們一起出發。"}</p>
       <div
         className={`upload ${drag ? "drag" : ""}`}
         onDragOver={(e) => {
@@ -501,7 +533,7 @@ function Upload({ onAdd }: { onAdd: (s: Subject) => void }) {
         <span className="upload-icon">
           <UploadIcon />
         </span>
-        <p className="upload-title">帶一份考古題上車</p>
+        <p className="upload-title">帶一份練習題上車</p>
         <p className="upload-sub">
           PDF（{MAX_PDF_MB} MB 內）、PowerPoint、Word 都可以
         </p>
@@ -542,10 +574,11 @@ function Upload({ onAdd }: { onAdd: (s: Subject) => void }) {
 // ============================================================
 // 單一題庫
 // ============================================================
-function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart: (s: Session) => void; onDelete: () => void }) {
-  const { set, data, onBack, onStart, onDelete } = props;
-  const all = useMemo(() => allQuestions(set), [set]);
-  const kindsAvail = (["choice", "fill", "short"] as Kind[]).filter((k) => all.some((q) => kindOf(q) === k));
+function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart: (s: Session) => void; onPref: (mode: string) => void; onDelete: () => void }) {
+  const { set, data, onBack, onStart, onPref, onDelete } = props;
+  const mode = modeOf(data, set);
+  const all = useMemo(() => allQuestions(set).filter((q) => inMode(q, mode)), [set, mode]);
+  const kindsAvail = (["choice", "fill", "order", "short"] as Kind[]).filter((k) => all.some((q) => kindOf(q) === k));
   const [scope, setScope] = useState<"all" | "marked" | "wrong">("all");
   const [kinds, setKinds] = useState<Kind[]>(kindsAvail);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -620,10 +653,19 @@ function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart:
 
       <ShareButton set={set} />
 
-      {set.ai && <p className="ai-note">這條路線是 AI 依你上傳的檔案規劃的，答案偶爾會出錯。覺得怪怪的，請對照原本的考古題。</p>}
+      {set.ai && <p className="ai-note">這條路線是 AI 依你上傳的檔案規劃的，答案偶爾會出錯。覺得怪怪的，請對照原本的練習題。</p>}
 
       <section className="panel">
         <h2>這趟想怎麼走？</h2>
+        {set.modes && (
+          <div className="seg" role="group" aria-label="出題範圍">
+            {set.modes.map((m) => (
+              <button key={m.id} className={mode === m.id ? "on" : ""} onClick={() => onPref(m.id)}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="seg" role="group" aria-label="範圍">
           {(
             [
@@ -656,9 +698,9 @@ function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart:
           <button
             className="btn primary large"
             disabled={items.length === 0}
-            onClick={() => onStart({ set, items: shuffle(items), mode: "practice", label: scope === "all" ? "練習" : scope === "marked" ? "還不熟的路標" : "上次迷路的路標" })}
+            onClick={() => onStart({ set, items: shuffle(items).slice(0, set.roundSize ?? items.length), mode: "practice", label: scope === "all" ? "練習" : scope === "marked" ? "還不熟的路標" : "上次迷路的路標" })}
           >
-            {items.length ? `出發！${items.length} 題` : "這裡沒有路標"}
+            {items.length ? `出發！${Math.min(items.length, set.roundSize ?? items.length)} 題` : "這裡沒有路標"}
           </button>
           {e && (
             <button className="btn large" onClick={startExam}>
@@ -666,6 +708,11 @@ function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart:
             </button>
           )}
         </div>
+        {set.roundSize && items.length > set.roundSize && (
+          <p className="fine">
+            每次從 {items.length} 個路標裡隨機抽 {set.roundSize} 個。
+          </p>
+        )}
         {e && (
           <p className="fine">
             模擬考：
@@ -694,7 +741,7 @@ function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart:
         <ol className="route">
           {trip.stations.map((x) => (
             <li key={x.topic} className={x.done ? "done" : x.seen ? "going" : ""}>
-              <button onClick={() => onStart({ set, items: shuffle(x.items), mode: "practice", label: `${x.topic}站` })}>
+              <button onClick={() => onStart({ set, items: shuffle(x.items).slice(0, set.roundSize ?? x.items.length), mode: "practice", label: `${x.topic}站` })}>
                 <span className="rt-dot" aria-hidden>
                   {x.done && <Check />}
                 </span>
@@ -806,6 +853,13 @@ function Practice(props: {
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [sel, setSel] = useState<number[]>([]);
   const [text, setText] = useState("");
+  // 排序題：seq 是目前排列（存 q.answer 的索引）；可以拖動，也可以點兩張互換
+  const [seq, setSeq] = useState<number[]>([]);
+  const [pickCard, setPickCard] = useState<number | null>(null);
+  const [dragV, setDragV] = useState<number | null>(null);
+  const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ v: number; x: number; y: number; moved: boolean } | null>(null);
+  const cardRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const [revealed, setRevealed] = useState(false);
   const [result, setResult] = useState<Outcome | null>(null);
   const [combo, setCombo] = useState(0);
@@ -813,6 +867,63 @@ function Practice(props: {
 
   const q = items[idx];
   const key = keyOf(set, q);
+  const orderPool = useMemo(() => {
+    if (q.type !== "order") return [];
+    let p = shuffle(q.answer.map((_, i) => i));
+    if (p.every((v, i) => v === i)) p = [...p.slice(1), p[0]];
+    return p;
+  }, [q]);
+  useEffect(() => setSeq(orderPool), [orderPool]);
+
+  function onCardDown(e: React.PointerEvent<HTMLButtonElement>, v: number) {
+    if (result) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { v, x: e.clientX, y: e.clientY, moved: false };
+  }
+  function onCardMove(e: React.PointerEvent<HTMLButtonElement>) {
+    const d = dragRef.current;
+    if (!d) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return;
+    d.moved = true;
+    setDragV(d.v);
+    setPickCard(null);
+    setGhost({ x: e.clientX, y: e.clientY });
+    // 找離手指最近的那張卡，把拖著的卡移到那個位置
+    let best = -1;
+    let bestDist = Infinity;
+    seq.forEach((v, i) => {
+      const el = cardRefs.current.get(v);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const dist = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      }
+    });
+    const from = seq.indexOf(d.v);
+    if (best >= 0 && best !== from) {
+      const nx = seq.filter((x) => x !== d.v);
+      nx.splice(best, 0, d.v);
+      setSeq(nx);
+    }
+  }
+  function onCardUp(v: number) {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setDragV(null);
+    setGhost(null);
+    if (!d || d.moved || result) return;
+    // 沒有拖動＝點一下：第一下選起來，第二下跟它交換
+    if (pickCard === null) return setPickCard(v);
+    if (pickCard === v) return setPickCard(null);
+    const a = seq.indexOf(pickCard);
+    const b = seq.indexOf(v);
+    const nx = [...seq];
+    [nx[a], nx[b]] = [nx[b], nx[a]];
+    setSeq(nx);
+    setPickCard(null);
+  }
   const last = idx + 1 >= items.length;
   const done = idx + (result ? 1 : 0);
 
@@ -846,6 +957,7 @@ function Practice(props: {
     setIdx((i) => i + 1);
     setSel([]);
     setText("");
+    setPickCard(null);
     setRevealed(false);
     setResult(null);
     window.scrollTo({ top: 0 });
@@ -943,6 +1055,47 @@ function Practice(props: {
             {q.type === "multi" && !result && (
               <button className="btn primary large" disabled={!sel.length} onClick={submitMulti}>
                 送出答案
+              </button>
+            )}
+          </>
+        )}
+
+        {q.type === "order" && (
+          <>
+            {!result && <p className="fine">按住字卡拖到想要的位置；也可以先點一張、再點另一張，兩張會互換。</p>}
+            <div className="ord-seq">
+              {seq.map((v, i) => (
+                <button
+                  key={v}
+                  ref={(el) => {
+                    if (el) cardRefs.current.set(v, el);
+                    else cardRefs.current.delete(v);
+                  }}
+                  className={`ord-card ${dragV === v ? "lifting" : ""} ${pickCard === v ? "picked" : ""} ${result ? (v === i ? "right" : "wrong") : ""}`}
+                  disabled={!!result}
+                  onPointerDown={(e) => onCardDown(e, v)}
+                  onPointerMove={onCardMove}
+                  onPointerUp={() => onCardUp(v)}
+                  onPointerCancel={() => {
+                    dragRef.current = null;
+                    setDragV(null);
+                    setGhost(null);
+                  }}
+                  aria-label={`第 ${i + 1} 個：${q.answer[v]}`}
+                >
+                  <small>{i + 1}</small>
+                  {q.answer[v]}
+                </button>
+              ))}
+            </div>
+            {ghost && dragV !== null && (
+              <span className="ord-ghost" style={{ left: ghost.x, top: ghost.y }} aria-hidden>
+                {q.answer[dragV]}
+              </span>
+            )}
+            {!result && (
+              <button className="btn primary large" onClick={() => answer(seq.every((v, i) => v === i), seq.map((v) => q.answer[v]).join(" → "))}>
+                排好了，送出
               </button>
             )}
           </>

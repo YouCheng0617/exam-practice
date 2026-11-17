@@ -89,7 +89,7 @@ export function parseSet(text: string, opts: { lenient?: boolean } = {}): Subjec
     throw new Error("這個檔案不是正確的 JSON 格式。");
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("題庫格式不正確。");
-  const name = str(raw.name) || (opts.lenient ? "我的考古題" : "");
+  const name = str(raw.name) || (opts.lenient ? "我的練習題" : "");
   if (!name) throw new Error("題庫缺少科目名稱（name）。");
 
   const questions: Question[] = [];
@@ -109,30 +109,36 @@ export function parseSet(text: string, opts: { lenient?: boolean } = {}): Subjec
     const explanation = str(item.explanation);
     const options = strs(item.options);
     const type = str(item.type) || (item.title ? "short" : "");
+    const tg = strs(item.tags);
+    const extra = tg.length ? { tags: tg } : {};
 
     if (type === "choice") {
       const answer = Number(item.answer);
       if (options.length < 2 || !Number.isInteger(answer) || answer < 0 || answer >= options.length)
         throw new Error(`第 ${n} 題（單選）的選項或答案不正確。`);
-      questions.push({ id, topic, question, explanation, type, options, answer });
+      questions.push({ id, topic, question, explanation, ...extra, type, options, answer });
     } else if (type === "multi") {
       const answer = Array.isArray(item.answer) ? [...new Set(item.answer.map(Number))] : [];
       if (options.length < 2 || !answer.length || answer.some((a) => !Number.isInteger(a) || a < 0 || a >= options.length))
         throw new Error(`第 ${n} 題（複選）的選項或答案不正確。`);
-      questions.push({ id, topic, question, explanation, type, options, answer });
+      questions.push({ id, topic, question, explanation, ...extra, type, options, answer });
     } else if (type === "tf") {
       if (typeof item.answer !== "boolean") throw new Error(`第 ${n} 題（是非）的答案要是 true 或 false。`);
-      questions.push({ id, topic, question, explanation, type, answer: item.answer });
+      questions.push({ id, topic, question, explanation, ...extra, type, answer: item.answer });
     } else if (type === "fill") {
       const answer = typeof item.answer === "string" ? [item.answer.trim()].filter(Boolean) : strs(item.answer);
       if (!answer.length) throw new Error(`第 ${n} 題（填空）沒有答案。`);
-      questions.push({ id, topic, question, explanation, type, answer });
+      questions.push({ id, topic, question, explanation, ...extra, type, answer });
+    } else if (type === "order") {
+      const answer = strs(item.answer);
+      if (answer.length < 2) throw new Error(`第 ${n} 題（排序）至少要有兩個項目。`);
+      questions.push({ id, topic, question, explanation, ...extra, type, answer });
     } else if (type === "short") {
       const answer = typeof item.answer === "string" ? [item.answer.trim()].filter(Boolean) : strs(item.answer);
       if (!answer.length) throw new Error(`第 ${n} 題（簡答）沒有參考答案。`);
       essays.push({ id, topic, question, answer, title: str(item.title) || `簡答題 ${essays.length + 1}`, plain: str(item.plain) || undefined });
     } else {
-      throw new Error(`第 ${n} 題的題型（type）要是 choice、multi、tf、fill 或 short。`);
+      throw new Error(`第 ${n} 題的題型（type）要是 choice、multi、tf、fill、order 或 short。`);
     }
   }
 
@@ -165,6 +171,10 @@ export function parseSet(text: string, opts: { lenient?: boolean } = {}): Subjec
       ? { name: str(ex!.name) || "模擬考", choiceCount: ec[0]!, choicePoint: ec[1]!, essayCount: ec[2]!, essayPoint: ec[3]!, note: str(ex!.note) || undefined }
       : undefined;
   const color = /^#[0-9a-f]{6}$/i.test(str(raw.color)) ? str(raw.color) : undefined;
+  const modes = Array.isArray(raw.modes)
+    ? (raw.modes as Record<string, unknown>[]).map((m) => ({ id: str(m?.id), label: str(m?.label) })).filter((m) => m.id && m.label)
+    : [];
+  const roundSize = num(raw.roundSize) || undefined;
   return {
     id: `custom-${Date.now().toString(36)}`,
     name,
@@ -177,5 +187,7 @@ export function parseSet(text: string, opts: { lenient?: boolean } = {}): Subjec
     custom: true,
     exam,
     color,
+    modes: modes.length ? modes : undefined,
+    roundSize,
   };
 }

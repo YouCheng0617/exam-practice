@@ -6,7 +6,7 @@ const base = process.env.PAGES_BASE_PATH || "";
 
 export const metadata: Metadata = {
   title: "沿途｜過程本身，就是風景",
-  description: "在不同風景和人文（科目）裡走一圈，找到自己的答案。把考古題變成一趟旅程：車票、護照、路線圖與明信片。",
+  description: "在不同風景和人文（科目）裡走一圈，找到自己的答案。把練習題變成一趟旅程：車票、護照、路線圖與明信片。",
   applicationName: "沿途",
   appleWebApp: { capable: true, title: "沿途", statusBarStyle: "default" },
   icons: {

@@ -28,6 +28,8 @@ export function encodeSet(s: Subject): string {
     highlights: s.highlights,
     color: s.color,
     exam: s.exam,
+    modes: s.modes,
+    roundSize: s.roundSize,
     questions: s.questions,
     essays: s.essays,
   };

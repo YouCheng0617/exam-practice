@@ -8,7 +8,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "沿途｜過程本身，就是風景",
     short_name: "沿途",
-    description: "在不同風景和人文（科目）裡走一圈，找到自己的答案。把考古題變成一趟旅程：車票、護照、路線圖與明信片。",
+    description: "在不同風景和人文（科目）裡走一圈，找到自己的答案。把練習題變成一趟旅程：車票、護照、路線圖與明信片。",
     id: `${base}/`,
     start_url: `${base}/`,
     scope: `${base}/`,
