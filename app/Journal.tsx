@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Subject } from "@/data/types";
 import { colorOf, type Data } from "@/lib/store";
+import { Mascot } from "./Travel";
 
 const tint = (c: string) => ({ "--c": c }) as React.CSSProperties;
 const fmt = (t: number) => {
@@ -30,7 +31,7 @@ export function Journal({ sets, data, onOpen }: { sets: Subject[]; data: Data; o
       </section>
 
       {cards.length === 0 ? (
-        <p className="empty">手帳還是空白的。出發吧，走過一題就會收到第一張明信片。</p>
+        <p className="empty"><Mascot mood="wait" className="m-empty" />手帳還是空白的。跟雪丸出發吧，走過一題就會收到第一張明信片。</p>
       ) : (
         <>
           {withCards.length > 1 && (

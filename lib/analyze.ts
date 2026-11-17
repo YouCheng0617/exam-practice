@@ -157,6 +157,14 @@ export function parseSet(text: string, opts: { lenient?: boolean } = {}): Subjec
     }
   }
   const topics = [...new Set([...questions, ...essays].map((q) => q.topic).filter((t): t is string => !!t))];
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+  const ex = raw.exam && typeof raw.exam === "object" ? (raw.exam as Record<string, unknown>) : null;
+  const ec = ex && [num(ex.choiceCount), num(ex.choicePoint), num(ex.essayCount), num(ex.essayPoint)];
+  const exam =
+    ec && ec.every((n) => n !== null) && (ec[0]! + ec[2]!) > 0
+      ? { name: str(ex!.name) || "模擬考", choiceCount: ec[0]!, choicePoint: ec[1]!, essayCount: ec[2]!, essayPoint: ec[3]!, note: str(ex!.note) || undefined }
+      : undefined;
+  const color = /^#[0-9a-f]{6}$/i.test(str(raw.color)) ? str(raw.color) : undefined;
   return {
     id: `custom-${Date.now().toString(36)}`,
     name,
@@ -167,5 +175,7 @@ export function parseSet(text: string, opts: { lenient?: boolean } = {}): Subjec
     questions,
     essays,
     custom: true,
+    exam,
+    color,
   };
 }

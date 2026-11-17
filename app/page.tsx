@@ -4,10 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SUBJECTS } from "@/data/subjects";
 import type { Subject } from "@/data/types";
 import { ACCEPT, MAX_PDF_MB, analyzeFile, parseSet } from "@/lib/analyze";
+import { decodeSet, readShareHash, shareKeyOf, shareUrl } from "@/lib/share";
 import { sfx } from "@/lib/sound";
 import { DailyChart, SubjectChart, TrendChart } from "./Charts";
 import { Journal } from "./Journal";
-import { Compass, PlaneTrail, Scenery, Stamp } from "./Travel";
+import { Compass, InkDefs, Mascot, PlaneTrail, Scenery, Stamp, VisaStamp } from "./Travel";
 import {
   EMPTY,
   KIND_LABEL,
@@ -66,6 +67,39 @@ const norm = (s: string) =>
     .toLowerCase();
 const letter = (i: number) => "ABCDEFGH"[i] ?? "";
 
+// 選項打亂順序，避免背位置。選項裡有「以上皆是」「A 與 B」這類依位置描述的，打亂會變成錯的，所以那題保持原順序。
+const POSITIONAL = /以上(?:皆|均|都|全|各項|所述|選項)|以下皆|皆(?:是|非|正確|錯誤|對|錯)|都(?:對|錯)|[A-HＡ-Ｈ]\s*[和與及、,，]\s*[A-HＡ-Ｈ]|選項|前述|上述/;
+function shuffleOptions(q: AnyQ): AnyQ {
+  if (q.type !== "choice" && q.type !== "multi") return q;
+  if (q.options.some((o) => POSITIONAL.test(o))) return q;
+  const order = shuffle(q.options.map((_, i) => i)); // order[新位置] = 原本的位置
+  const options = order.map((i) => q.options[i]);
+  if (q.type === "choice") return { ...q, options, answer: order.indexOf(q.answer) };
+  return { ...q, options, answer: q.answer.map((a) => order.indexOf(a)) };
+}
+// 簡答題：用「兩個字一組」比對，粗略判斷使用者的答案有沒有提到某個重點
+const grams = (t: string) => {
+  const c = norm(t).replace(/[^\p{L}\p{N}]/gu, "");
+  const g = new Set<string>();
+  for (let i = 0; i < c.length - 1; i++) g.add(c.slice(i, i + 2));
+  return g;
+};
+function covers(answer: string, point: string) {
+  const a = grams(answer);
+  const p = grams(point);
+  if (!a.size || !p.size) return false;
+  let hit = 0;
+  for (const x of p) if (a.has(x)) hit++;
+  return hit >= 3 || hit / p.size >= 0.25;
+}
+
+// 給手帳用：只寫答案內容，不寫 A/B/C（每次打亂後字母都不一樣）
+function answerPlain(q: AnyQ): string {
+  if (q.type === "choice") return q.options[q.answer];
+  if (q.type === "multi") return [...q.answer].sort((a, b) => a - b).map((i) => q.options[i]).join("、");
+  return answerText(q);
+}
+
 function answerText(q: AnyQ): string {
   if (q.type === "choice") return `${letter(q.answer)}. ${q.options[q.answer]}`;
   if (q.type === "multi") return [...q.answer].sort((a, b) => a - b).map((i) => `${letter(i)}. ${q.options[i]}`).join("、");
@@ -101,7 +135,21 @@ export default function Home() {
   const [data, setData] = useState<Data>(EMPTY);
   const [view, setView] = useState<View>({ name: "library" });
 
+  const [incoming, setIncoming] = useState<{ set: Subject; key: string } | { error: string } | null>(null);
+
   useEffect(() => setData(loadData()), []);
+
+  // 打開別人分享的連結：#s=… 解開後先問要不要加入
+  useEffect(() => {
+    const code = readShareHash();
+    if (!code) return;
+    history.replaceState(null, "", location.pathname + location.search);
+    try {
+      setIncoming({ set: decodeSet(code), key: shareKeyOf(code) });
+    } catch (e) {
+      setIncoming({ error: e instanceof Error ? e.message : "這個分享連結打不開。" });
+    }
+  }, []);
 
   const update = useCallback((fn: (d: Data) => Data) => {
     setData((d) => {
@@ -117,7 +165,8 @@ export default function Home() {
     setView(v);
     window.scrollTo({ top: 0 });
   }
-  const start = (session: Session) => go({ name: "practice", session, run: Date.now() });
+  // 每次出發都重新打亂選項（「回頭再走一次」也會再打亂一次）
+  const start = (session: Session) => go({ name: "practice", session: { ...session, items: session.items.map(shuffleOptions) }, run: Date.now() });
 
   function finish(session: Session, outcomes: Outcome[]) {
     if (!outcomes.length) return go({ name: "set", id: session.set.id });
@@ -141,6 +190,19 @@ export default function Home() {
     go({ name: "result", session, outcomes });
   }
 
+  function acceptIncoming() {
+    if (!incoming || "error" in incoming) return;
+    const same = data.custom.find((s) => s.shareKey === incoming.key);
+    if (same) {
+      setIncoming(null);
+      return go({ name: "set", id: same.id });
+    }
+    const s = { ...incoming.set, shareKey: incoming.key, color: incoming.set.color ?? nextColor(sets) };
+    update((d) => ({ ...d, custom: [s, ...d.custom] }));
+    setIncoming(null);
+    go({ name: "set", id: s.id });
+  }
+
   const current = view.name === "set" ? sets.find((s) => s.id === view.id) : undefined;
   const tab = view.name === "history" || view.name === "journal" ? view.name : "library";
   const days = streak(data);
@@ -149,6 +211,7 @@ export default function Home() {
 
   return (
     <>
+      <InkDefs />
       <header className="nav">
         <div className="nav-in">
           <button className="brand" onClick={() => go({ name: "library" })}>
@@ -244,6 +307,36 @@ export default function Home() {
         {view.name === "history" && <History sets={sets} data={data} onStart={start} onClear={() => update((d) => ({ ...d, stats: {}, attempts: [] }))} />}
       </main>
       {view.name !== "practice" && <Scenery />}
+      {incoming && (
+        <div className="share-in" role="dialog" aria-label="匯入分享的路線">
+          <Mascot mood={"error" in incoming ? "comfort" : "wow"} className="share-in-pic" />
+          {"error" in incoming ? (
+            <div>
+              <p>{incoming.error}</p>
+              <div className="actions">
+                <button className="btn" onClick={() => setIncoming(null)}>
+                  關閉
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <p>
+                <b>有人分享了一條路線給你</b>
+                <br />「{incoming.set.name}」・{allQuestions(incoming.set).length} 個路標
+              </p>
+              <div className="actions">
+                <button className="btn primary" onClick={acceptIncoming}>
+                  加入我的車站
+                </button>
+                <button className="btn" onClick={() => setIncoming(null)}>
+                  不用了
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }
@@ -347,7 +440,21 @@ function Library(props: { sets: Subject[]; data: Data; onOpen: (id: string) => v
             );
           })}
         </div>
-        {shown.length === 0 && <p className="empty">這條路線還沒有車票，換一個試試。</p>}
+        {shown.length === 0 && <p className="empty"><Mascot mood="wow" className="m-empty" />{sets.length === 0 ? "還沒有車票。上傳一份考古題，或打開朋友分享給你的連結，就能出發。" : "這條路線還沒有車票，換一個試試。"}</p>}
+      </section>
+
+      <section className="block buddy">
+        <Mascot mood="normal" className="buddy-pic" />
+        <div>
+          <p className="eyebrow">你的旅伴</p>
+          <h2>
+            雪丸 <small>Yukimaru</small>
+          </h2>
+          <p>
+            一隻充滿好奇心、愛探險的小鳥，來自很冷很冷的地方，所以超級怕熱。為了學會各地的知識，牠跟家人道別，圍上領巾、背起小背包，踏上自己的旅程。
+          </p>
+          <p className="fine">每一科都是雪丸還沒去過的地方。陪牠走一圈，你們都會找到自己的答案。</p>
+        </div>
       </section>
     </>
   );
@@ -376,6 +483,8 @@ function Upload({ onAdd }: { onAdd: (s: Subject) => void }) {
 
   return (
     <section className="upload-wrap">
+      <Mascot mood={state.kind === "busy" ? "wait" : "wave"} className="m-upload" />
+      <p className="m-bubble hand">{state.kind === "busy" ? "雪丸正在規劃路線…" : "我是雪丸！帶一份考古題來，我們一起出發。"}</p>
       <div
         className={`upload ${drag ? "drag" : ""}`}
         onDragOver={(e) => {
@@ -416,7 +525,7 @@ function Upload({ onAdd }: { onAdd: (s: Subject) => void }) {
         <div className={`notice ${state.kind}`} role="status">
           <div>
             <p className="notice-file">{state.file}</p>
-            {state.kind === "busy" && <p className="busy">正在規劃路線：讀檔、整理重點、立路標…大約半分鐘，先別離開這一頁。</p>}
+            {state.kind === "busy" && <p className="busy"><Mascot mood="wait" className="m-inline" />雪丸正在規劃路線：讀檔、整理重點、立路標…大約半分鐘，先別離開這一頁。</p>}
             {state.kind === "error" && <p>{state.msg}</p>}
           </div>
           {state.kind !== "busy" && (
@@ -497,11 +606,8 @@ function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart:
             VISAS・入境章 {trip.arrived} / {trip.stations.length}
           </span>
           <div className="pp-stamps">
-            {trip.stations.map((x) => (
-              <span key={x.topic} className={`visa ${x.done ? "on" : ""}`}>
-                <b>{x.topic}</b>
-                <small>{x.done ? "已抵達" : `${x.cleared} / ${x.total}`}</small>
-              </span>
+            {trip.stations.map((x, i) => (
+              <VisaStamp key={x.topic} topic={x.topic} index={i} done={x.done} progress={`${x.cleared} / ${x.total}`} />
             ))}
           </div>
           {trip.done ? (
@@ -511,6 +617,8 @@ function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart:
           )}
         </div>
       </section>
+
+      <ShareButton set={set} />
 
       {set.ai && <p className="ai-note">這條路線是 AI 依你上傳的檔案規劃的，答案偶爾會出錯。覺得怪怪的，請對照原本的考古題。</p>}
 
@@ -624,6 +732,36 @@ function SetPage(props: { set: Subject; data: Data; onBack: () => void; onStart:
   );
 }
 
+// 分享這條路線：手機用系統的分享選單，電腦直接複製連結
+function ShareButton({ set }: { set: Subject }) {
+  const [msg, setMsg] = useState("");
+  async function share() {
+    const url = shareUrl(set);
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `沿途｜${set.name}`, text: `跟我一起走「${set.name}」這條路線`, url });
+        return;
+      } catch (e) {
+        if (e instanceof Error && e.name === "AbortError") return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setMsg("已複製分享連結，貼給朋友就能一起走這條路線。");
+    } catch {
+      setMsg("沒辦法自動複製，請稍後再試一次。");
+    }
+  }
+  return (
+    <div className="share-row">
+      <button className="btn" onClick={share}>
+        分享這條路線
+      </button>
+      <span className="fine">{msg || "連結裡就是整份題庫，拿到連結的人都能匯入；題庫不會存在我們的伺服器。"}</span>
+    </div>
+  );
+}
+
 // 主題掌握度列表：點一列就練習那個主題
 function TopicList({ rows, showSet, onStart }: { rows: TopicStat[]; showSet: boolean; onStart: (s: Session) => void }) {
   return (
@@ -690,8 +828,8 @@ function Practice(props: {
         setName: set.name,
         topic: q.topic,
         question: q.question,
-        answer: q.type === "short" ? "" : answerText(q),
-        note: q.type === "short" ? q.answer.join("；") : q.explanation || answerText(q),
+        answer: q.type === "short" ? "" : answerPlain(q),
+        note: q.type === "short" ? q.answer.join("；") : q.explanation || answerPlain(q),
         at: Date.now(),
       };
       onAnswer(key, ok, card);
@@ -853,28 +991,44 @@ function Practice(props: {
         {q.type === "short" && (
           <>
             {q.plain && <p className="plain">{q.plain}</p>}
+            <textarea
+              className="answer-box"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="寫下你的答案，只寫重點也可以…"
+              disabled={revealed}
+              rows={5}
+              aria-label="你的答案"
+            />
             {!revealed ? (
-              <>
-                <p className="fine">先在心裡想好答案，再翻開來對。</p>
-                <button className="btn primary large" onClick={() => setRevealed(true)}>
-                  翻開答案
-                </button>
-              </>
+              <button className="btn primary large" onClick={() => setRevealed(true)}>
+                {text.trim() ? "寫好了，翻開答案" : "我不會，直接翻開答案"}
+              </button>
             ) : (
               <div className="feedback neutral">
                 <p className="fb-title">參考答案</p>
                 <ul className="points">
-                  {q.answer.map((a, i) => (
-                    <li key={i}>{a}</li>
-                  ))}
+                  {q.answer.map((a, i) => {
+                    const hit = covers(text, a);
+                    return (
+                      <li key={i} className={hit ? "hit" : ""}>
+                        {a}
+                        {hit && <small className="hit-tag">你有寫到</small>}
+                      </li>
+                    );
+                  })}
                 </ul>
                 {!result && (
                   <div className="rate">
-                    <span>跟你想的一樣嗎？</span>
-                    <button className="btn primary" onClick={() => answer(true, "")}>
+                    <span>
+                      {text.trim()
+                        ? `你寫的提到了 ${q.answer.filter((a) => covers(text, a)).length} / ${q.answer.length} 個重點（電腦比對，僅供參考）。跟參考答案差不多嗎？`
+                        : "看完參考答案，下次遇到會寫了嗎？"}
+                    </span>
+                    <button className="btn primary" onClick={() => answer(true, text.trim())}>
                       有想到 👍
                     </button>
-                    <button className="btn" onClick={() => answer(false, "")}>
+                    <button className="btn" onClick={() => answer(false, text.trim())}>
                       還不熟
                     </button>
                   </div>
@@ -886,6 +1040,7 @@ function Practice(props: {
 
         {result && q.type !== "short" && (
           <div className={`feedback ${result.ok ? "good" : "bad"}`}>
+            <Mascot mood={result.ok ? "happy" : "comfort"} className="m-fb" />
             <p className="fb-title">
               <span className="fb-icon">{result.ok ? <Check /> : <Cross />}</span>
               {line}
@@ -899,7 +1054,7 @@ function Practice(props: {
           </div>
         )}
 
-        {result && q.type === "short" && <p className={`cheer ${result.ok ? "good" : "bad"}`}>{result.ok ? line : "沒關係，已經幫你記下來，之後再練。"}</p>}
+        {result && q.type === "short" && <p className={`cheer ${result.ok ? "good" : "bad"}`}><Mascot mood={result.ok ? "happy" : "comfort"} className="m-inline" />{result.ok ? line : "沒關係，已經幫你記下來，之後再練。"}</p>}
 
         {result && (
           <button className="btn primary large next" onClick={next} autoFocus>
@@ -960,6 +1115,7 @@ function Result(props: { session: Session; outcomes: Outcome[]; sound: boolean; 
             </span>
           ))}
         </p>
+        <Mascot mood={pct >= 60 ? "happy" : "comfort"} className="m-result" />
         <p className="big">
           {exam ? score : pct}
           <small>{exam ? ` / ${max}` : "%"}</small>
@@ -1041,7 +1197,7 @@ function History(props: { sets: Subject[]; data: Data; onStart: (s: Session) => 
       </section>
 
       {seen === 0 ? (
-        <p className="empty">還沒有足跡，挑一張車票出發吧！</p>
+        <p className="empty"><Mascot mood="wave" className="m-empty" />還沒有足跡，挑一張車票跟雪丸一起出發吧！</p>
       ) : (
         <>
           <section className="block charts">

@@ -41,5 +41,6 @@ export type Subject = {
   essays: EssayQ[];
   exam?: ExamInfo;
   custom?: boolean; // 使用者自己加入的題庫
+  shareKey?: string; // 從分享連結匯入的：同一個連結只留一份
   ai?: boolean; // AI 從上傳的檔案整理出來的
 };

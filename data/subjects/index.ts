@@ -1,8 +1,7 @@
 import type { Subject } from "../types";
-import civilLaw from "./civil-law";
-import infosec from "./infosec";
 
 // ============================================================
-// 科目清單：新增科目 = 在 subjects/ 加一個檔案（照 civil-law.ts 的格式），再加進下面的陣列
+// 內建、所有人都看得到的題庫。目前沒有：題庫都由使用者自己上傳，或從分享連結匯入。
+// 要新增公開題庫：在這個資料夾加一個檔案（格式見 data/types.ts 的 Subject），再加進下面的陣列。
 // ============================================================
-export const SUBJECTS: Subject[] = [civilLaw, infosec];
+export const SUBJECTS: Subject[] = [];
